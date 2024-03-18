@@ -169,7 +169,8 @@ def processData_Wallet(access_token, beginTime=None, endTime=None, timezone=None
     for index, row in combined_df.iterrows():
         coin = row['coin']
         wallet_id = row['walletID']
-        
+        # 对每个wallet先将prevId置空
+        prevId = None
         # 通过nextBatchPrevId翻页
         while True:
             try:
