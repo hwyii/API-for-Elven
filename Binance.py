@@ -17,7 +17,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
 
     # 读入交易对名单
     pairs = pd.read_csv('pairs.csv')
-    pairs.dropna(subset=['test'], inplace=True)
+    pairs.dropna(subset=['test'], inplace=True) # 选择列
 
     # 设置请求headers
     headers = {
@@ -69,7 +69,25 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         df['currency'] = temp
         df["type"] = df["isBuyer"].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
         df["direction"] = df["isBuyer"].apply(lambda x: "IN" if x else "OUT")
-    
+        
+        # 复制原始数据，准备拆分后的两条数据
+        df_out = df.copy()
+        df_in = df.copy()
+
+        # 拆分后的第一条数据，IN
+        df_in['currency'] = df_in['currency'].apply(lambda x: x.split('/')[0])  # 取斜杠前的币种
+        df_in["type"] = "EXCHANGE_TRADE_IN"
+        df_in["direction"] = "IN"
+
+        # 拆分后的第二条数据，USDT
+        df_out['currency'] = df_out['currency'].apply(lambda x: x.split('/')[1])  # 取斜杠后的币种
+        df_out["type"] = "EXCHANGE_TRADE_OUT"
+        df_out["direction"] = "OUT"
+
+
+        # 合并两条拆分后的数据到原始数据框中
+        df = pd.concat([df_in, df_out], ignore_index=True)
+        
         # EXCHANGE FEE
         new_rows = df.copy()
         new_rows['type'] = 'EXCHANGE_FEE'
@@ -84,6 +102,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     
         # 将该 symbol 的数据添加到总的数据框中
         df_all_data = pd.concat([df_all_data, df], ignore_index=True)
+        
     # 选择时间
     beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
     endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
