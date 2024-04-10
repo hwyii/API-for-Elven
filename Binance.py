@@ -1,3 +1,4 @@
+# processData to get withdraw, deposit, trade history
 import requests
 import hmac
 import hashlib
@@ -7,13 +8,92 @@ from datetime import datetime, timedelta
 import time
 
 def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
+    
+    # endpoint
     base_url = 'https://api.binance.com'
     endpoint_deposit = '/sapi/v1/capital/deposit/hisrec'
     endpoint_withdraw = '/sapi/v1/capital/withdraw/history'
+    endpoint_trade = '/api/v3/myTrades'
+
+    # 读入交易对名单
+    pairs = pd.read_csv('pairs.csv')
+    pairs.dropna(subset=['test'], inplace=True)
+
+    # 设置请求headers
+    headers = {
+        'X-MBX-APIKEY': apiKey,
+    } 
     
+    ##### trade
+    # 创建一个空的 DataFrame 用于存储所有数据
+    df_all_data = pd.DataFrame()
+
+    # 遍历每个 symbol
+    for symbol in pairs['test']:
+        temp = symbol # 存储带斜杠的交易对
+        # 去除 symbol 列中的斜杠
+        symbol = symbol.replace('/', '')
+        time.sleep(1)  #避免请求过于频繁
+    
+        # 构造 API 请求的 URL
+        url = f'{base_url}{endpoint_trade}'
+    
+        # 构造请求参数
+        params = {
+            'symbol': symbol,
+            'recvWindow': 6000
+            }
+    
+        # 参数中加时间戳
+        timestamp = int(time.time() * 1000)  # 以毫秒为单位的 UNIX 时间戳
+        params['timestamp'] = timestamp
+    
+        # 参数中加签名
+        query_string = f"symbol={params['symbol']}&recvWindow={params['recvWindow']}&timestamp={timestamp}"
+        signature = hmac.new(apiSecret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        params['signature'] = signature
+    
+         # 发送 API 请求
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        df = response.json()
+        df = pd.DataFrame(df)
+        if df.empty: # 如果没有这个交易对
+            continue
+    
+        # 格式修改
+        df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime', 'qty': 'amount'}, inplace=True)
+        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        df['contactPlatformSlug'] = ''
+        df['contactIdentity'] = ''
+        df['currency'] = temp
+        df["type"] = df["isBuyer"].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
+        df["direction"] = df["isBuyer"].apply(lambda x: "IN" if x else "OUT")
+    
+        # EXCHANGE FEE
+        new_rows = df.copy()
+        new_rows['type'] = 'EXCHANGE_FEE'
+        new_rows['amount'] = new_rows['commission']
+        new_rows['currency'] = new_rows['commissionAsset']
+        new_rows['direction'] = 'OUT'
+
+        # 将更新后的行添加回原始数据框
+        df = pd.concat([df, new_rows], ignore_index=True)
+        df = df[['type', 'txid', 'datetime', 'contactIdentity',
+                        'contactPlatformSlug', 'direction', 'currency', 'amount']]
+    
+        # 将该 symbol 的数据添加到总的数据框中
+        df_all_data = pd.concat([df_all_data, df], ignore_index=True)
+    # 选择时间
+    beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
+    endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
+    df_all_data = df_all_data[(df_all_data['datetime'] >= beginTime_tr) & (df_all_data['datetime'] <= endTime_tr)]
+    df_all_data
+
     # 创建一个空的 DataFrame，用于存放结果
     all_transfers = pd.DataFrame()
 
+    ##### withdraw和deposit
     # 以每90天为间隔进行循环
     while (1):
         if beginTime > endTime:
@@ -130,7 +210,9 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         # 更新下一次循环的开始时间为当前循环的结束时间的下一天
         currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%dT%H:%M:%S")
         beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d")
-        
+
+    all_transfers = pd.concat([df_all_data, all_transfers], ignore_index=True)
+
     return all_transfers
 
 apiKey = '0C9cLHlMnhilAvHKRI2XnWuAuC3tbzavNMUzN34ePNgkxj1W0WzOJzE4P0gen1fZ'
