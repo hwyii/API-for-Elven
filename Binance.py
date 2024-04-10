@@ -14,6 +14,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     endpoint_deposit = '/sapi/v1/capital/deposit/hisrec'
     endpoint_withdraw = '/sapi/v1/capital/withdraw/history'
     endpoint_trade = '/api/v3/myTrades'
+    endpoint_fiat = '/sapi/v1/fiat/orders'
 
     # 读入交易对名单
     pairs = pd.read_csv('pairs.csv')
@@ -112,9 +113,10 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     # 创建一个空的 DataFrame，用于存放结果
     all_transfers = pd.DataFrame()
 
-    ##### withdraw和deposit
+    ##### 加密货币withdraw和deposit
     # 以每90天为间隔进行循环
     while (1):
+        time.sleep(1)
         if beginTime > endTime:
             break
         # 获得当前循环的结束时间
@@ -159,6 +161,23 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             'startTime': start_time,
             'endTime': end_time
         }
+        # 法定货币入金请求参数
+        params_fiat0 = {
+            'transactionType': '0',  
+            'timestamp': int(time.time() * 1000), 
+            'beginTime': start_time,
+            'endTime': end_time,
+            'recvWindow': 60000
+        }
+        # 法定货币出金请求参数
+        params_fiat1 = {
+            'transactionType': '1',
+            'timestamp': int(time.time() * 1000), 
+            'beginTime': start_time,
+            'endTime': end_time,
+            'recvWindow': 60000
+        }
+        
         # 参数中加时间戳：
         timestamp = int(time.time() * 1000) # 以毫秒为单位的 UNIX 时间戳
         params_de['timestamp'] = timestamp
@@ -173,10 +192,12 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         signature_wi = hmac.new(apiSecret.encode('utf-8'), query_string_wi.encode('utf-8'), hashlib.sha256).hexdigest()
         params_wi['signature'] = signature_wi
 
-        headers = {
-            'X-MBX-APIKEY': apiKey,
-        }    
-   
+        query_string_fiat0 = '&'.join([f"{k}={v}" for k, v in params_fiat0.items()])
+        signature_fiat0 = hmac.new(apiSecret.encode(), query_string_fiat0.encode(), hashlib.sha256).hexdigest()
+
+        query_string_fiat1 = '&'.join([f"{k}={v}" for k, v in params_fiat1.items()])
+        signature_fiat1 = hmac.new(apiSecret.encode(), query_string_fiat1.encode(), hashlib.sha256).hexdigest()
+        
         try:
             ### deposit history
             deposit_url = f'{base_url}{endpoint_deposit}'
@@ -193,9 +214,12 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             result['type'] = 'EXCHANGE_DEPOSIT'
             result['direction'] = 'IN'
 
+            time.sleep(3)
+            
             ### withdraw history
             withdraw_url = f'{base_url}{endpoint_withdraw}'
             wi_response = requests.get(withdraw_url, headers=headers, params=params_wi)
+            time.sleep(5)
             wi_response.raise_for_status()
             wi_df = wi_response.json()
             wi_result = pd.DataFrame(wi_df)
@@ -207,7 +231,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             wi_result['type'] = 'EXCHANGE_WITHDRAW'
             wi_result['direction'] = 'OUT'
 
-            # EXCHANGE_FEE
+            # 加密货币EXCHANGE_FEE
             new_rows = wi_result.copy()
             new_rows['type'] = 'EXCHANGE_FEE'
             new_rows['amount'] = new_rows['transactionFee']
@@ -216,8 +240,62 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             
             result = result[['type', 'txid', 'datetime', 'contactIdentity',
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
+
+            ### 法币出入金
+            
+            fiat_response0 = requests.get(base_url + endpoint_fiat, headers=headers, params={**params_fiat0, 'signature': signature_fiat0})
+            time.sleep(4) # 避免访问过于频繁
+            fiat_response1 = requests.get(base_url + endpoint_fiat, headers=headers, params={**params_fiat1, 'signature': signature_fiat1})
+            fiat_response0.raise_for_status()
+            fiat_response1.raise_for_status()
+    
+            fiat_df0 = fiat_response0.json()['data']
+            fiat_df1 = fiat_response1.json()['data']
+    
+            fiat_result0 = pd.DataFrame(fiat_df0)
+            fiat_result1 = pd.DataFrame(fiat_df1)
+    
+            if not fiat_result0.empty: # 入金
+                fiat_result0 = fiat_result0[['status', 'fiatCurrency', 'totalFee', 
+                                             'orderNo', 'updateTime']].copy()
+                fiat_result0.rename(columns={'fiatCurrency': 'currency', 'orderNo': 'txid', 
+                                             'updateTime': 'datetime'}, inplace=True)
+                fiat_result0['contactPlatformSlug'] = ''
+                fiat_result0['contactIdentity'] = ''
+                fiat_result0['type'] = 'EXCHANGE_DEPOSIT'
+                fiat_result0['direction'] = 'IN'
+
+            if not fiat_result1.empty: # 出金
+                fiat_result1 = fiat_result1[['status', 'fiatCurrency', 'totalFee', 
+                                     'orderNo', 'updateTime']].copy()
+                fiat_result1.rename(columns={'fiatCurrency': 'currency', 'orderNo': 'txid', 
+                                             'updateTime': 'datetime'}, inplace=True)
+                fiat_result1['contactPlatformSlug'] = ''
+                fiat_result1['contactIdentity'] = ''
+                fiat_result1['type'] = 'EXCHANGE_WITHDRAW'
+                fiat_result1['direction'] = 'OUT'
         
+            if not fiat_result0.empty or not fiat_result1.empty:
+                fiat_result = pd.concat([fiat_result0, fiat_result1], ignore_index=True) # 出入金数据
+            else:
+                fiat_result = pd.DataFrame()
+                
+            if not fiat_result.empty: # 法币的EXCHAGE_FEE
+                new_rows = fiat_result.copy()
+                new_rows['type'] = 'EXCHANGE_FEE'
+                new_rows['direction'] = 'OUT'
+                new_rows['amount'] = new_rows['totalFee']
+        
+                result_fiat_all = pd.concat([fiat_result, new_rows], ignore_index=True)
+            
+                result_fiat_all = result_fiat_all[['type', 'txid', 'datetime', 'contactIdentity',
+                                                   'contactPlatformSlug', 'direction', 'currency', 'amount']]
+            else:
+                result_fiat_all = pd.DataFrame()
+                
+            result = pd.concat([result, result_fiat_all], ignore_index=True)
             current_transfers = result
+            
         except requests.exceptions.RequestException as e:
             print("Error:", e)
             return None  
