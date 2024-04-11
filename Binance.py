@@ -26,11 +26,13 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     } 
     
     ##### trade
+    print('开始获取Trade数据')
     # 创建一个空的 DataFrame 用于存储所有数据
     df_all_data = pd.DataFrame()
 
     # 遍历每个 symbol
     for symbol in pairs['test']:
+        print(f'开始获取 {symbol} Trade数据')
         temp = symbol # 存储带斜杠的交易对
         # 去除 symbol 列中的斜杠
         symbol = symbol.replace('/', '')
@@ -61,7 +63,10 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         df = pd.DataFrame(df)
         if df.empty: # 如果没有这个交易对
             continue
-    
+
+        trade_num = len(df)
+        print(f'共获取{trade_num}条Trade数据')
+        
         # 格式修改
         df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime', 'qty': 'amount'}, inplace=True)
         df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -200,23 +205,29 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         
         try:
             ### deposit history
+            print('开始获取Deposit数据')
             deposit_url = f'{base_url}{endpoint_deposit}'
             de_response = requests.get(deposit_url, headers=headers, params=params_de)
             de_response.raise_for_status()
             de_df = de_response.json()
             de_result = pd.DataFrame(de_df)
-            # print(de_result)
-            result = de_result[['amount', 'coin', 'address', 'txId', 'insertTime']].copy()
+            
+            if de_result.empty:
+                print("没有Deposit数据")
+                result = de_result
+            else:
+                result = de_result[['amount', 'coin', 'address', 'txId', 'insertTime']].copy()
         
-            result.rename(columns={'coin': 'currency', 'txId': 'txid', 'insertTime': 'datetime', 'address': 'contactIdentity'}, inplace=True)
-            result['datetime'] = pd.to_datetime(result['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-            result['contactPlatformSlug'] = ''
-            result['type'] = 'EXCHANGE_DEPOSIT'
-            result['direction'] = 'IN'
+                result.rename(columns={'coin': 'currency', 'txId': 'txid', 'insertTime': 'datetime', 'address': 'contactIdentity'}, inplace=True)
+                result['datetime'] = pd.to_datetime(result['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                result['contactPlatformSlug'] = ''
+                result['type'] = 'EXCHANGE_DEPOSIT'
+                result['direction'] = 'IN'
 
             time.sleep(3)
             
             ### withdraw history
+            print('开始获取Withdraw数据')
             withdraw_url = f'{base_url}{endpoint_withdraw}'
             wi_response = requests.get(withdraw_url, headers=headers, params=params_wi)
             time.sleep(5)
@@ -224,17 +235,20 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             wi_df = wi_response.json()
             wi_result = pd.DataFrame(wi_df)
 
-            wi_result = wi_result[['amount', 'coin', 'address', 'txId', 'completeTime', 'transactionFee']].copy()
-            wi_result.rename(columns={'coin': 'currency', 'txId': 'txid', 'completeTime': 'datetime', 'address': 'contactIdentity'}, inplace=True)
+            if wi_result.empty:
+                print("没有Withdraw数据")
+            else: 
+                wi_result = wi_result[['amount', 'coin', 'address', 'txId', 'completeTime', 'transactionFee']].copy()
+                wi_result.rename(columns={'coin': 'currency', 'txId': 'txid', 'completeTime': 'datetime', 'address': 'contactIdentity'}, inplace=True)
 
-            wi_result['contactPlatformSlug'] = ''
-            wi_result['type'] = 'EXCHANGE_WITHDRAW'
-            wi_result['direction'] = 'OUT'
+                wi_result['contactPlatformSlug'] = ''
+                wi_result['type'] = 'EXCHANGE_WITHDRAW'
+                wi_result['direction'] = 'OUT'
 
-            # 加密货币EXCHANGE_FEE
-            new_rows = wi_result.copy()
-            new_rows['type'] = 'EXCHANGE_FEE'
-            new_rows['amount'] = new_rows['transactionFee']
+                # 加密货币EXCHANGE_FEE
+                new_rows = wi_result.copy()
+                new_rows['type'] = 'EXCHANGE_FEE'
+                new_rows['amount'] = new_rows['transactionFee']
         
             result = pd.concat([result, wi_result, new_rows], ignore_index=True)
             
@@ -242,9 +256,9 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
 
             ### 法币出入金
-            
+            print('开始获取Fiat数据')
             fiat_response0 = requests.get(base_url + endpoint_fiat, headers=headers, params={**params_fiat0, 'signature': signature_fiat0})
-            time.sleep(4) # 避免访问过于频繁
+            time.sleep(20) # 避免访问过于频繁
             fiat_response1 = requests.get(base_url + endpoint_fiat, headers=headers, params={**params_fiat1, 'signature': signature_fiat1})
             fiat_response0.raise_for_status()
             fiat_response1.raise_for_status()
@@ -256,6 +270,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             fiat_result1 = pd.DataFrame(fiat_df1)
     
             if not fiat_result0.empty: # 入金
+                fiat_result0 = fiat_result0[fiat_result0['status'] == 'Successful']
                 fiat_result0 = fiat_result0[['status', 'fiatCurrency', 'totalFee', 
                                              'orderNo', 'updateTime']].copy()
                 fiat_result0.rename(columns={'fiatCurrency': 'currency', 'orderNo': 'txid', 
@@ -266,6 +281,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
                 fiat_result0['direction'] = 'IN'
 
             if not fiat_result1.empty: # 出金
+                fiat_result1 = fiat_result1[fiat_result1['status'] == 'Successful']
                 fiat_result1 = fiat_result1[['status', 'fiatCurrency', 'totalFee', 
                                      'orderNo', 'updateTime']].copy()
                 fiat_result1.rename(columns={'fiatCurrency': 'currency', 'orderNo': 'txid', 
@@ -292,6 +308,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
                                                    'contactPlatformSlug', 'direction', 'currency', 'amount']]
             else:
                 result_fiat_all = pd.DataFrame()
+                print("没有Fiat数据")
                 
             result = pd.concat([result, result_fiat_all], ignore_index=True)
             current_transfers = result
@@ -315,5 +332,5 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
 apiKey = '0C9cLHlMnhilAvHKRI2XnWuAuC3tbzavNMUzN34ePNgkxj1W0WzOJzE4P0gen1fZ'
 apiSecret = 'QdKKJKUS0fILSuLN5akEy7m7DkQv49IWP1QsoLSVQH4dZVuegzVybcUz2fzQdbjl'
 
-transfers = processData(apiKey, apiSecret, beginTime = '2023-11-26', endTime = '2024-04-08', timezone = 'Asia/Shanghai')
+transfers = processData(apiKey, apiSecret, beginTime = '2021-01-01', endTime = '2024-04-08', timezone = 'Asia/Shanghai')
 transfers
