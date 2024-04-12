@@ -68,27 +68,30 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         print(f'共获取{trade_num}条Trade数据')
         
         # 格式修改
-        df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime', 'qty': 'amount'}, inplace=True)
+        df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime'}, inplace=True)
         df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         df['contactPlatformSlug'] = ''
         df['contactIdentity'] = ''
         df['currency'] = temp
-        df["type"] = df["isBuyer"].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
-        df["direction"] = df["isBuyer"].apply(lambda x: "IN" if x else "OUT")
+        df["type"] = ''
+        df["direction"] = ''
+        df['amount'] = ''
         
         # 复制原始数据，准备拆分后的两条数据
         df_out = df.copy()
         df_in = df.copy()
 
-        # 拆分后的第一条数据，IN
+        # 拆分后的第一条数据
         df_in['currency'] = df_in['currency'].apply(lambda x: x.split('/')[0])  # 取斜杠前的币种
-        df_in["type"] = "EXCHANGE_TRADE_IN"
-        df_in["direction"] = "IN"
+        df_in['direction'] = df['isBuyer'].apply(lambda x: "IN" if x else "OUT")
+        df_in['type'] = df['isBuyer'].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
+        df_in["amount"] = df_in['qty']
 
-        # 拆分后的第二条数据，USDT
+        # 拆分后的第二条数据
         df_out['currency'] = df_out['currency'].apply(lambda x: x.split('/')[1])  # 取斜杠后的币种
-        df_out["type"] = "EXCHANGE_TRADE_OUT"
-        df_out["direction"] = "OUT"
+        df_out['direction'] = df_out['isBuyer'].apply(lambda x: "OUT" if x else "IN")
+        df_out['type'] = df_out['isBuyer'].apply(lambda x: "EXCHANGE_TRADE_OUT" if x else "EXCHANGE_TRADE_IN")
+        df_out['amount'] = df_out['quoteQty']
 
 
         # 合并两条拆分后的数据到原始数据框中
@@ -101,20 +104,21 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         new_rows['currency'] = new_rows['commissionAsset']
         new_rows['direction'] = 'OUT'
 
-        # 将更新后的行添加回原始数据框
-        df = pd.concat([df, new_rows], ignore_index=True)
+        # 将新的DataFrame与原始的DataFrame合并，确保不会有重复的行出现
+        df = pd.concat([df, new_rows], ignore_index=True).drop_duplicates()
+  
         df = df[['type', 'txid', 'datetime', 'contactIdentity',
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
-    
+        
         # 将该 symbol 的数据添加到总的数据框中
         df_all_data = pd.concat([df_all_data, df], ignore_index=True)
         
-    # 选择时间
-    beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
-    endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
-    df_all_data = df_all_data[(df_all_data['datetime'] >= beginTime_tr) & (df_all_data['datetime'] <= endTime_tr)]
-    df_all_data
-
+        
+        # 选择时间
+        beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
+        endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
+        df_all_data = df_all_data[(df_all_data['datetime'] >= beginTime_tr) & (df_all_data['datetime'] <= endTime_tr)]
+    
     # 创建一个空的 DataFrame，用于存放结果
     all_transfers = pd.DataFrame()
 
@@ -205,7 +209,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         
         try:
             ### deposit history
-            print('开始获取Deposit数据')
+            print(f"开始获取 {beginTime} 到 {EndTime} 的Deposit数据")
             deposit_url = f'{base_url}{endpoint_deposit}'
             de_response = requests.get(deposit_url, headers=headers, params=params_de)
             de_response.raise_for_status()
@@ -227,7 +231,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             time.sleep(3)
             
             ### withdraw history
-            print('开始获取Withdraw数据')
+            print(f"开始获取 {beginTime} 到 {EndTime} 的Withdraw数据")
             withdraw_url = f'{base_url}{endpoint_withdraw}'
             wi_response = requests.get(withdraw_url, headers=headers, params=params_wi)
             time.sleep(5)
@@ -240,7 +244,9 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             else: 
                 wi_result = wi_result[['amount', 'coin', 'address', 'txId', 'completeTime', 'transactionFee']].copy()
                 wi_result.rename(columns={'coin': 'currency', 'txId': 'txid', 'completeTime': 'datetime', 'address': 'contactIdentity'}, inplace=True)
+                wi_result['datetime'] = wi_result['datetime'].apply(lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S").strftime('%Y-%m-%dT%H:%M:%SZ'))
 
+                
                 wi_result['contactPlatformSlug'] = ''
                 wi_result['type'] = 'EXCHANGE_WITHDRAW'
                 wi_result['direction'] = 'OUT'
@@ -254,7 +260,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             
             result = result[['type', 'txid', 'datetime', 'contactIdentity',
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
-
+            '''
             ### 法币出入金
             print('开始获取Fiat数据')
             fiat_response0 = requests.get(base_url + endpoint_fiat, headers=headers, params={**params_fiat0, 'signature': signature_fiat0})
@@ -311,6 +317,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
                 print("没有Fiat数据")
                 
             result = pd.concat([result, result_fiat_all], ignore_index=True)
+            '''
             current_transfers = result
             
         except requests.exceptions.RequestException as e:
@@ -325,12 +332,15 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%dT%H:%M:%S")
         beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    all_transfers = pd.concat([df_all_data, all_transfers], ignore_index=True)
+    all_transfers = pd.concat([df_all_data, all_transfers], ignore_index=True).drop_duplicates()
+
+    all_transfers = all_transfers[(all_transfers['datetime'] >= beginTime_tr) & (all_transfers['datetime'] <= endTime_tr)]
+    all_transfers.reset_index(drop=True, inplace=True)
 
     return all_transfers
 
 apiKey = '0C9cLHlMnhilAvHKRI2XnWuAuC3tbzavNMUzN34ePNgkxj1W0WzOJzE4P0gen1fZ'
 apiSecret = 'QdKKJKUS0fILSuLN5akEy7m7DkQv49IWP1QsoLSVQH4dZVuegzVybcUz2fzQdbjl'
 
-transfers = processData(apiKey, apiSecret, beginTime = '2021-01-01', endTime = '2024-04-08', timezone = 'Asia/Shanghai')
+transfers = processData(apiKey, apiSecret, beginTime = '2021-02-01', endTime = '2024-04-08', timezone = 'Asia/Shanghai')
 transfers
