@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import time
 
 def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
-    
+    function_startTime = time.time()
     # endpoint
     base_url = 'https://api.binance.com'
     endpoint_deposit = '/sapi/v1/capital/deposit/hisrec'
@@ -18,7 +18,6 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
 
     # 读入交易对名单
     pairs = pd.read_csv('pairs.csv')
-    pairs.dropna(subset=['test'], inplace=True) # 选择列
 
     # 设置请求headers
     headers = {
@@ -31,7 +30,10 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     df_all_data = pd.DataFrame()
 
     # 遍历每个 symbol
-    for symbol in pairs['test']:
+    for symbol in pairs['symbol']:
+        if pd.isna(symbol):
+            print('已经获取所有数据！')
+            break
         print(f'开始获取 {symbol} Trade数据')
         temp = symbol # 存储带斜杠的交易对
         # 去除 symbol 列中的斜杠
@@ -57,68 +59,72 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         params['signature'] = signature
     
          # 发送 API 请求
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        df = response.json()
-        df = pd.DataFrame(df)
-        if df.empty: # 如果没有这个交易对
-            continue
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            df = response.json()
+            df = pd.DataFrame(df)
+            if df.empty: # 如果没有这个交易对
+                continue
 
-        trade_num = len(df)
-        print(f'共获取{trade_num}条Trade数据')
+            trade_num = len(df)
+            print(f'共获取{trade_num}条Trade数据')
         
-        # 格式修改
-        df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime'}, inplace=True)
-        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-        df['contactPlatformSlug'] = ''
-        df['contactIdentity'] = ''
-        df['currency'] = temp
-        df["type"] = ''
-        df["direction"] = ''
-        df['amount'] = ''
+            # 格式修改
+            df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime'}, inplace=True)
+            df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            df['contactPlatformSlug'] = ''
+            df['contactIdentity'] = ''
+            df['currency'] = temp
+            df["type"] = ''
+            df["direction"] = ''
+            df['amount'] = ''
         
-        # 复制原始数据，准备拆分后的两条数据
-        df_out = df.copy()
-        df_in = df.copy()
+            # 复制原始数据，准备拆分后的两条数据
+            df_out = df.copy()
+            df_in = df.copy()
+    
+            # 拆分后的第一条数据
+            df_in['currency'] = df_in['currency'].apply(lambda x: x.split('/')[0])  # 取斜杠前的币种
+            df_in['direction'] = df['isBuyer'].apply(lambda x: "IN" if x else "OUT")
+            df_in['type'] = df['isBuyer'].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
+            df_in["amount"] = df_in['qty']
 
-        # 拆分后的第一条数据
-        df_in['currency'] = df_in['currency'].apply(lambda x: x.split('/')[0])  # 取斜杠前的币种
-        df_in['direction'] = df['isBuyer'].apply(lambda x: "IN" if x else "OUT")
-        df_in['type'] = df['isBuyer'].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
-        df_in["amount"] = df_in['qty']
-
-        # 拆分后的第二条数据
-        df_out['currency'] = df_out['currency'].apply(lambda x: x.split('/')[1])  # 取斜杠后的币种
-        df_out['direction'] = df_out['isBuyer'].apply(lambda x: "OUT" if x else "IN")
-        df_out['type'] = df_out['isBuyer'].apply(lambda x: "EXCHANGE_TRADE_OUT" if x else "EXCHANGE_TRADE_IN")
-        df_out['amount'] = df_out['quoteQty']
+            # 拆分后的第二条数据
+            df_out['currency'] = df_out['currency'].apply(lambda x: x.split('/')[1])  # 取斜杠后的币种
+            df_out['direction'] = df_out['isBuyer'].apply(lambda x: "OUT" if x else "IN")
+            df_out['type'] = df_out['isBuyer'].apply(lambda x: "EXCHANGE_TRADE_OUT" if x else "EXCHANGE_TRADE_IN")
+            df_out['amount'] = df_out['quoteQty']
 
 
-        # 合并两条拆分后的数据到原始数据框中
-        df = pd.concat([df_in, df_out], ignore_index=True)
+            # 合并两条拆分后的数据到原始数据框中
+            df = pd.concat([df_in, df_out], ignore_index=True)
         
-        # EXCHANGE FEE
-        new_rows = df.copy()
-        new_rows['type'] = 'EXCHANGE_FEE'
-        new_rows['amount'] = new_rows['commission']
-        new_rows['currency'] = new_rows['commissionAsset']
-        new_rows['direction'] = 'OUT'
+            # EXCHANGE FEE
+            new_rows = df.copy()
+            new_rows['type'] = 'EXCHANGE_FEE'
+            new_rows['amount'] = new_rows['commission']
+            new_rows['currency'] = new_rows['commissionAsset']
+            new_rows['direction'] = 'OUT'
 
-        # 将新的DataFrame与原始的DataFrame合并，确保不会有重复的行出现
-        df = pd.concat([df, new_rows], ignore_index=True).drop_duplicates()
+            # 将新的DataFrame与原始的DataFrame合并，确保不会有重复的行出现
+            df = pd.concat([df, new_rows], ignore_index=True).drop_duplicates()
   
-        df = df[['type', 'txid', 'datetime', 'contactIdentity',
+            df = df[['type', 'txid', 'datetime', 'contactIdentity',
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
         
-        # 将该 symbol 的数据添加到总的数据框中
-        df_all_data = pd.concat([df_all_data, df], ignore_index=True)
+            # 将该 symbol 的数据添加到总的数据框中
+            df_all_data = pd.concat([df_all_data, df], ignore_index=True)
         
         
-        # 选择时间
-        beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
-        endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
-        df_all_data = df_all_data[(df_all_data['datetime'] >= beginTime_tr) & (df_all_data['datetime'] <= endTime_tr)]
-    
+            # 选择时间
+            beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
+            endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
+            df_all_data = df_all_data[(df_all_data['datetime'] >= beginTime_tr) & (df_all_data['datetime'] <= endTime_tr)]
+        
+        except requests.exceptions.RequestException as e:
+            print("Error:", e)
+            continue
     # 创建一个空的 DataFrame，用于存放结果
     all_transfers = pd.DataFrame()
 
@@ -171,21 +177,21 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             'endTime': end_time
         }
         # 法定货币入金请求参数
-        params_fiat0 = {
-            'transactionType': '0',  
-            'timestamp': int(time.time() * 1000), 
-            'beginTime': start_time,
-            'endTime': end_time,
-            'recvWindow': 60000
-        }
+        # params_fiat0 = {
+        #     'transactionType': '0',  
+        #     'timestamp': int(time.time() * 1000), 
+        #     'beginTime': start_time,
+        #     'endTime': end_time,
+        #     'recvWindow': 60000
+        # }
         # 法定货币出金请求参数
-        params_fiat1 = {
-            'transactionType': '1',
-            'timestamp': int(time.time() * 1000), 
-            'beginTime': start_time,
-            'endTime': end_time,
-            'recvWindow': 60000
-        }
+        # params_fiat1 = {
+        #     'transactionType': '1',
+        #     'timestamp': int(time.time() * 1000), 
+        #     'beginTime': start_time,
+        #     'endTime': end_time,
+        #     'recvWindow': 60000
+        # }
         
         # 参数中加时间戳：
         timestamp = int(time.time() * 1000) # 以毫秒为单位的 UNIX 时间戳
@@ -200,13 +206,13 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         query_string_wi = f'status={params_wi["status"]}&startTime={params_wi["startTime"]}&endTime={params_wi["endTime"]}&timestamp={timestamp}'
         signature_wi = hmac.new(apiSecret.encode('utf-8'), query_string_wi.encode('utf-8'), hashlib.sha256).hexdigest()
         params_wi['signature'] = signature_wi
-
+        '''
         query_string_fiat0 = '&'.join([f"{k}={v}" for k, v in params_fiat0.items()])
         signature_fiat0 = hmac.new(apiSecret.encode(), query_string_fiat0.encode(), hashlib.sha256).hexdigest()
 
         query_string_fiat1 = '&'.join([f"{k}={v}" for k, v in params_fiat1.items()])
         signature_fiat1 = hmac.new(apiSecret.encode(), query_string_fiat1.encode(), hashlib.sha256).hexdigest()
-        
+        '''
         try:
             ### deposit history
             print(f"开始获取 {beginTime} 到 {EndTime} 的Deposit数据")
@@ -234,7 +240,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             print(f"开始获取 {beginTime} 到 {EndTime} 的Withdraw数据")
             withdraw_url = f'{base_url}{endpoint_withdraw}'
             wi_response = requests.get(withdraw_url, headers=headers, params=params_wi)
-            time.sleep(5)
+            time.sleep(3)
             wi_response.raise_for_status()
             wi_df = wi_response.json()
             wi_result = pd.DataFrame(wi_df)
@@ -322,7 +328,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             
         except requests.exceptions.RequestException as e:
             print("Error:", e)
-            return None  
+            continue
 
         if current_transfers is not None:
             # 将当前时间段的结果添加到总结果中
@@ -336,11 +342,13 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
 
     all_transfers = all_transfers[(all_transfers['datetime'] >= beginTime_tr) & (all_transfers['datetime'] <= endTime_tr)]
     all_transfers.reset_index(drop=True, inplace=True)
-
+    
+    function_endTime = time.time()
+    duration = function_endTime - function_startTime
+    print(f"函数运行时间：{duration} 秒")
     return all_transfers
 
 apiKey = '0C9cLHlMnhilAvHKRI2XnWuAuC3tbzavNMUzN34ePNgkxj1W0WzOJzE4P0gen1fZ'
 apiSecret = 'QdKKJKUS0fILSuLN5akEy7m7DkQv49IWP1QsoLSVQH4dZVuegzVybcUz2fzQdbjl'
 
 transfers = processData(apiKey, apiSecret, beginTime = '2021-02-01', endTime = '2024-04-08', timezone = 'Asia/Shanghai')
-transfers
