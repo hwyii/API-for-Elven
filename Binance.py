@@ -88,10 +88,6 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             try:
                 response = requests.get(base_url + endpoint_trade, headers=headers, params=params_in)
                 response.raise_for_status()
-                df_new = pd.DataFrame(response.json())
-                trade_num = len(df_new)
-                df = pd.concat([df, df_new], ignore_index=True)
-            
             except requests.exceptions.RequestException as e:
                 print("Error:", e)
                 break
@@ -250,6 +246,39 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             de_response.raise_for_status()
             de_df = de_response.json()
             de_result = pd.DataFrame(de_df)
+
+            trade_num = len(de_result)
+            df_new = de_result
+            limit = 1000
+            offset = 0
+            while trade_num == limit: # 数据条数超出limit限制
+                time.sleep(1)
+                offset += limit
+        
+                params_in = {
+                    'status': 1, # 只查询提现完成的
+                    'startTime': start_time,
+                    'endTime': end_time,
+                    'offset': offset,
+                    'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
+                }
+
+                query_string_in = '&'.join([f"{k}={v}" for k, v in params_in.items()])
+                signature_in = hmac.new(apiSecret.encode('utf-8'), query_string_in.encode('utf-8'), hashlib.sha256).hexdigest()
+                params_in['signature'] = signature_in
+
+                try:
+                    response = requests.get(base_url + endpoint_deposit, headers=headers, params=params_in)
+                    response.raise_for_status()
+                    df_new = pd.DataFrame(response.json())
+                    trade_num = len(df_new)
+                    de_result = pd.concat([de_result, df_new], ignore_index=True)
+            
+                except requests.exceptions.RequestException as e:
+                    print("Error:", e)
+                    break
+            
+            print(f'共获取该时间内{len(de_result)}条Deposit数据')
             
             if de_result.empty:
                 print("没有Deposit数据")
@@ -274,6 +303,39 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             wi_response.raise_for_status()
             wi_df = wi_response.json()
             wi_result = pd.DataFrame(wi_df)
+
+            trade_num = len(wi_result)
+            df_new = wi_result
+            limit = 1000
+            offset = 0
+            while trade_num == limit: # 数据条数超出limit限制
+                time.sleep(1)
+                offset += limit
+        
+                params_in = {
+                    'status': 6, # 只查询提现完成的
+                    'startTime': start_time,
+                    'endTime': end_time,
+                    'offset': offset,
+                    'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
+                }
+
+                query_string_in = '&'.join([f"{k}={v}" for k, v in params_in.items()])
+                signature_in = hmac.new(apiSecret.encode('utf-8'), query_string_in.encode('utf-8'), hashlib.sha256).hexdigest()
+                params_in['signature'] = signature_in
+
+                try:
+                    response = requests.get(base_url + endpoint_withdraw, headers=headers, params=params_in)
+                    response.raise_for_status()
+                    df_new = pd.DataFrame(response.json())
+                    trade_num = len(df_new)
+                    wi_result = pd.concat([wi_result, df_new], ignore_index=True)
+            
+                except requests.exceptions.RequestException as e:
+                    print("Error:", e)
+                    break
+            
+            print(f'共获取该时间内{len(wi_result)}条Withdraw数据')
 
             if wi_result.empty:
                 print("没有Withdraw数据")
@@ -382,4 +444,4 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
 apiKey = ''
 apiSecret = ''
 
-transfers = processData(apiKey, apiSecret, beginTime = '2024-02-01', endTime = '2024-04-08', timezone = 'Asia/Shanghai')
+transfers = processData(apiKey, apiSecret, beginTime = '2023-09-26', endTime = '2024-01-01', timezone = 'Asia/Shanghai')
