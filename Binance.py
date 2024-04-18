@@ -7,6 +7,37 @@ import pytz
 from datetime import datetime, timedelta
 import time
 
+def processTime(beginTime, currentEndTime, timezone):
+    
+    beginTime += 'T00:00:00'
+    currentEndTime = currentEndTime.strftime("%Y-%m-%d") + "T23:59:59"
+    
+    # 获取目标时区的时区对象
+    target_timezone = pytz.timezone(timezone)
+    
+    # 将日期时间字符串转换为目标时区的时间
+    dt_begin = target_timezone.localize(datetime.strptime(beginTime, "%Y-%m-%dT%H:%M:%S"))
+    dt_end = target_timezone.localize(datetime.strptime(currentEndTime, "%Y-%m-%dT%H:%M:%S"))
+
+    # 将目标时区的时间转换为 UTC 时间
+    utc_begin = dt_begin.astimezone(pytz.utc)
+    utc_end = dt_end.astimezone(pytz.utc)
+
+    # 转化为时间戳
+    start_time = int(utc_begin.timestamp() * 1000)
+    end_time = int(utc_end.timestamp() * 1000)
+    
+    return start_time, end_time
+
+# processData to get withdraw, deposit, trade history
+import requests
+import hmac
+import hashlib
+import pandas as pd
+import pytz
+from datetime import datetime, timedelta
+import time
+
 def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     function_startTime = time.time()
     # endpoint
@@ -30,7 +61,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     df_all_data = pd.DataFrame()
 
     # 遍历每个 symbol
-    for symbol in pairs['test3']:
+    for symbol in pairs['test2']:
         if pd.isna(symbol):
             print('已经获取所有数据！')
             break
@@ -99,7 +130,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         print(f'共获取{len(df)}条Trade数据')
         
         # 格式修改
-        df.rename(columns={'symbol': 'currency', 'id': 'txid', 'time': 'datetime'}, inplace=True)
+        df.rename(columns={'symbol': 'currency', 'id': 'txHash', 'time': 'datetime'}, inplace=True)
         df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         df['contactPlatformSlug'] = ''
         df['contactIdentity'] = ''
@@ -138,7 +169,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         # 将新的DataFrame与原始的DataFrame合并，确保不会有重复的行出现
         df = pd.concat([df, new_rows], ignore_index=True).drop_duplicates()
   
-        df = df[['type', 'txid', 'datetime', 'contactIdentity',
+        df = df[['type', 'txHash', 'datetime', 'contactIdentity',
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
         
         # 将该 symbol 的数据添加到总的数据框中
@@ -166,40 +197,20 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             currentEndTime = datetime.strptime(endTime, "%Y-%m-%d")
         
         # 处理当前时间段的数据
-       
-        ### 处理日期和时区
-        beginTime = beginTime + 'T00:00:00'
+        startTimestamp, endTimestamp = processTime(beginTime, currentEndTime, timezone)
         currentEndTime = currentEndTime.strftime("%Y-%m-%d") + "T23:59:59"
-        
-        dt_begin = datetime.strptime(beginTime, "%Y-%m-%dT%H:%M:%S")
-        dt_end = datetime.strptime(currentEndTime, "%Y-%m-%dT%H:%M:%S")
+        beginTime = datetime.utcfromtimestamp(startTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S")
 
-        # 获取目标时区的时区对象
-        target_timezone = pytz.timezone(timezone)
-        # 将日期时间对象转换为目标时区的时间
-        localized_dt_begin = target_timezone.localize(dt_begin)
-        localized_dt_end = target_timezone.localize(dt_end)
-        # 将本地时间转换为 UTC 时间
-        utc_begin = localized_dt_begin.astimezone(pytz.utc)
-        utc_end = localized_dt_end.astimezone(pytz.utc)
-        # 使用 strftime 函数将 datetime 对象格式化为指定格式的字符串
-        beginTime = utc_begin.strftime('%Y-%m-%dT%H:%M:%SZ')
-        EndTime = utc_end.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        # 转化为时间戳
-        start_time = int(datetime.strptime(beginTime, '%Y-%m-%dT%H:%M:%SZ').timestamp() * 1000)
-        end_time = int(datetime.strptime(EndTime, '%Y-%m-%dT%H:%M:%SZ').timestamp() * 1000)
-    
         # 设置请求参数：
         params_de = {
             'status': 1, # 只查询成功的
-            'startTime': start_time,
-            'endTime': end_time
+            'startTime': startTimestamp,
+            'endTime': endTimestamp
         }
         params_wi = {
             'status': 6, # 只查询提现完成的
-            'startTime': start_time,
-            'endTime': end_time
+            'startTime': startTimestamp,
+            'endTime': endTimestamp
         }
         # 法定货币入金请求参数
         # params_fiat0 = {
@@ -240,7 +251,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         '''
         try:
             ### deposit history
-            print(f"开始获取 {beginTime} 到 {EndTime} 的Deposit数据")
+            print(f"开始获取 {beginTime} 到 {currentEndTime} 的Deposit数据")
             deposit_url = f'{base_url}{endpoint_deposit}'
             de_response = requests.get(deposit_url, headers=headers, params=params_de)
             de_response.raise_for_status()
@@ -257,8 +268,8 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         
                 params_in = {
                     'status': 1, # 只查询提现完成的
-                    'startTime': start_time,
-                    'endTime': end_time,
+                    'startTime': startTimestamp,
+                    'endTime': endTimestamp,
                     'offset': offset,
                     'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
                 }
@@ -286,7 +297,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             else:
                 result = de_result[['amount', 'coin', 'address', 'txId', 'insertTime', 'network']].copy()
         
-                result.rename(columns={'coin': 'currency', 'txId': 'txid', 'insertTime': 'datetime', 'address': 'contactIdentity',
+                result.rename(columns={'coin': 'currency', 'txId': 'txHash', 'insertTime': 'datetime', 'address': 'contactIdentity',
                                        'network': 'contactPlatformSlug'}, inplace=True)
                 result['datetime'] = pd.to_datetime(result['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
                 # result['contactPlatformSlug'] = ''
@@ -296,7 +307,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             time.sleep(3)
             
             ### withdraw history
-            print(f"开始获取 {beginTime} 到 {EndTime} 的Withdraw数据")
+            print(f"开始获取 {beginTime} 到 {currentEndTime} 的Withdraw数据")
             withdraw_url = f'{base_url}{endpoint_withdraw}'
             wi_response = requests.get(withdraw_url, headers=headers, params=params_wi)
             time.sleep(3)
@@ -314,8 +325,8 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         
                 params_in = {
                     'status': 6, # 只查询提现完成的
-                    'startTime': start_time,
-                    'endTime': end_time,
+                    'startTime': startTimestamp,
+                    'endTime': endTimestamp,
                     'offset': offset,
                     'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
                 }
@@ -341,7 +352,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
                 print("没有Withdraw数据")
             else: 
                 wi_result = wi_result[['amount', 'coin', 'address', 'txId', 'completeTime', 'transactionFee', 'network']].copy()
-                wi_result.rename(columns={'coin': 'currency', 'txId': 'txid', 'completeTime': 'datetime', 'address': 'contactIdentity',
+                wi_result.rename(columns={'coin': 'currency', 'txId': 'txHash', 'completeTime': 'datetime', 'address': 'contactIdentity',
                                           'network': 'contactPlatformSlug'}, inplace=True)
                 wi_result['datetime'] = wi_result['datetime'].apply(lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S").strftime('%Y-%m-%dT%H:%M:%SZ'))
 
@@ -357,7 +368,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         
             result = pd.concat([result, wi_result, new_rows], ignore_index=True)
             
-            result = result[['type', 'txid', 'datetime', 'contactIdentity',
+            result = result[['type', 'txHash', 'datetime', 'contactIdentity',
                         'contactPlatformSlug', 'direction', 'currency', 'amount']]
             '''
             ### 法币出入金
@@ -441,7 +452,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     print(f"函数运行时间：{duration} 秒")
     return all_transfers
 
-apiKey = ''
-apiSecret = ''
+apiKey = 'cPRKGQV6QGTOwpQUTK6VhbungH5rTy6xKL4TZQgipr6oPqPAgtnE5gfGpI2BIu0K'
+apiSecret = 'LbYip4Polxsnv2pMGoRdt3QGLmvD43555XH2iuXdsDs9V5r0C7SL9CDhzWbk9d1l'
 
-transfers = processData(apiKey, apiSecret, beginTime = '2023-09-26', endTime = '2024-01-01', timezone = 'Asia/Shanghai')
+transfers = processData(apiKey, apiSecret, beginTime = '2023-12-01', endTime = '2024-01-01', timezone = 'Asia/Shanghai')
