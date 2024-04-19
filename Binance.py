@@ -7,17 +7,17 @@ import pytz
 from datetime import datetime, timedelta
 import time
 
-def processTime(beginTime, currentEndTime, timezone):
+def processTime(beginTime, endTime, timezone):
     
     beginTime += 'T00:00:00'
-    currentEndTime = currentEndTime.strftime("%Y-%m-%d") + "T23:59:59"
+    endTime += "T23:59:59"
     
     # 获取目标时区的时区对象
     target_timezone = pytz.timezone(timezone)
     
     # 将日期时间字符串转换为目标时区的时间
     dt_begin = target_timezone.localize(datetime.strptime(beginTime, "%Y-%m-%dT%H:%M:%S"))
-    dt_end = target_timezone.localize(datetime.strptime(currentEndTime, "%Y-%m-%dT%H:%M:%S"))
+    dt_end = target_timezone.localize(datetime.strptime(endTime, "%Y-%m-%dT%H:%M:%S"))
 
     # 将目标时区的时间转换为 UTC 时间
     utc_begin = dt_begin.astimezone(pytz.utc)
@@ -27,18 +27,9 @@ def processTime(beginTime, currentEndTime, timezone):
     start_time = int(utc_begin.timestamp() * 1000)
     end_time = int(utc_end.timestamp() * 1000)
     
-    return start_time, end_time
+    return start_time, end_time 
 
-# processData to get withdraw, deposit, trade history
-import requests
-import hmac
-import hashlib
-import pandas as pd
-import pytz
-from datetime import datetime, timedelta
-import time
-
-def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
+def processData(pairs, apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     function_startTime = time.time()
     # endpoint
     base_url = 'https://api.binance.com'
@@ -46,9 +37,6 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     endpoint_withdraw = '/sapi/v1/capital/withdraw/history'
     endpoint_trade = '/api/v3/myTrades'
     endpoint_fiat = '/sapi/v1/fiat/orders'
-
-    # 读入交易对名单
-    pairs = pd.read_csv('pairs.csv')
 
     # 设置请求headers
     headers = {
@@ -61,7 +49,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     df_all_data = pd.DataFrame()
 
     # 遍历每个 symbol
-    for symbol in pairs['test2']:
+    for symbol in pairs['binanceTest']:
         if pd.isna(symbol):
             print('已经获取所有数据！')
             break
@@ -191,15 +179,16 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         if beginTime > endTime:
             break
         # 获得当前循环的结束时间
-        currentEndTime = datetime.strptime(beginTime, "%Y-%m-%d") + timedelta(days=90)
+        currentEndTime = datetime.strptime(beginTime, "%Y-%m-%d") + timedelta(days=90) # 为了用timedelta增加90天，将currentEndTime转换为datetime的年月日格式
         # 如果当前结束时间超过了指定的结束时间，则将其设置为指定的结束时间
         if currentEndTime > datetime.strptime(endTime, "%Y-%m-%d"):
             currentEndTime = datetime.strptime(endTime, "%Y-%m-%d")
         
         # 处理当前时间段的数据
+        currentEndTime = currentEndTime.strftime("%Y-%m-%d") # 为了下一步传入processTime，将currentEndTime转成字符串年月日格式
         startTimestamp, endTimestamp = processTime(beginTime, currentEndTime, timezone)
-        currentEndTime = currentEndTime.strftime("%Y-%m-%d") + "T23:59:59"
-        beginTime = datetime.utcfromtimestamp(startTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+        beginTimehms = datetime.utcfromtimestamp(startTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+        endTimehms = datetime.utcfromtimestamp(endTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S") # 为了便于按时间print，这两步是年月日时分秒的字符串格式
 
         # 设置请求参数：
         params_de = {
@@ -251,7 +240,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
         '''
         try:
             ### deposit history
-            print(f"开始获取 {beginTime} 到 {currentEndTime} 的Deposit数据")
+            print(f"开始获取 {beginTimehms} 到 {endTimehms} 的Deposit数据")
             deposit_url = f'{base_url}{endpoint_deposit}'
             de_response = requests.get(deposit_url, headers=headers, params=params_de)
             de_response.raise_for_status()
@@ -307,7 +296,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             time.sleep(3)
             
             ### withdraw history
-            print(f"开始获取 {beginTime} 到 {currentEndTime} 的Withdraw数据")
+            print(f"开始获取 {beginTimehms} 到 {endTimehms} 的Withdraw数据")
             withdraw_url = f'{base_url}{endpoint_withdraw}'
             wi_response = requests.get(withdraw_url, headers=headers, params=params_wi)
             time.sleep(3)
@@ -439,8 +428,8 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
             all_transfers = pd.concat([all_transfers, current_transfers], ignore_index=True)
         
         # 更新下一次循环的开始时间为当前循环的结束时间的下一天
-        currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%dT%H:%M:%S")
-        beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d")
+        currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%d") # 下一步要用timedelata翻到新的一天，所以将currentEndTime变成datetime年月日格式
+        beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d") # beginTime最后仍转成年月日字符串格式 
 
     all_transfers = pd.concat([df_all_data, all_transfers], ignore_index=True).drop_duplicates()
 
@@ -454,5 +443,9 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
 
 apiKey = 'cPRKGQV6QGTOwpQUTK6VhbungH5rTy6xKL4TZQgipr6oPqPAgtnE5gfGpI2BIu0K'
 apiSecret = 'LbYip4Polxsnv2pMGoRdt3QGLmvD43555XH2iuXdsDs9V5r0C7SL9CDhzWbk9d1l'
+# 读入交易对名单
+pairs = pd.read_csv('pairs.csv')
 
-transfers = processData(apiKey, apiSecret, beginTime = '2023-12-01', endTime = '2024-01-01', timezone = 'Asia/Shanghai')
+transfers = processData(pairs, apiKey, apiSecret, beginTime = '2023-08-01', endTime = '2024-01-01', timezone = 'Asia/Shanghai')
+
+transfers
