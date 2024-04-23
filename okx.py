@@ -1,5 +1,5 @@
 # processData to get withdraw, deposit and trade history
-# https://www.okx.com/docs-v5/zh/?python#funding-account-rest-api-get-deposit-history
+
 import requests
 import json
 import time
@@ -46,191 +46,207 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
         
     if beginTime > endTime:
         print("时间输入错误")
-
+    beginTimetemp = beginTime
+    endTimetemp = endTime # 存下时间
     ##### withdraw和deposit
-    
-    currentEndTime = datetime.strptime(beginTime, "%Y-%m-%d") + timedelta(days=90)
-    # 如果当前结束时间超过了指定的结束时间，则将其设置为指定的结束时间
-    if currentEndTime > datetime.strptime(endTime, "%Y-%m-%d"):
-        currentEndTime = datetime.strptime(endTime, "%Y-%m-%d")
+    while True:
+        time.sleep(1)
+        if beginTime > endTime:
+            break
+        # 获得当前循环的结束时间
+        currentEndTime = datetime.strptime(beginTime, "%Y-%m-%d") + relativedelta(months=1) # 为了用relativedelta增加3个月，将currentEndTime转换为datetime的年月日格式
+        # 如果当前结束时间超过了指定的结束时间，则将其设置为指定的结束时间
+        if currentEndTime > datetime.strptime(endTime, "%Y-%m-%d"):
+            currentEndTime = datetime.strptime(endTime, "%Y-%m-%d")
         
-    # 处理当前时间段的数据
-    currentEndTime = currentEndTime.strftime("%Y-%m-%d") # 为了下一步传入processTime，将currentEndTime转成字符串年月日格式
-    startTimestamp, endTimestamp = processTime(beginTime, currentEndTime, timezone)
-    beginTimehms = datetime.utcfromtimestamp(startTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S")
-    endTimehms = datetime.utcfromtimestamp(endTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S") # 为了便于按时间print，这两步是年月日时分秒的字符串格式
+        # 处理当前时间段的数据
+        currentEndTime = currentEndTime.strftime("%Y-%m-%d") # 为了下一步传入processTime，将currentEndTime转成字符串年月日格式
+        startTimestamp, endTimestamp = processTime(beginTime, currentEndTime, timezone)
+        beginTimehms = datetime.utcfromtimestamp(startTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+        endTimehms = datetime.utcfromtimestamp(endTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S") # 为了便于按时间print，这两步是年月日时分秒的字符串格式
 
-    method = "GET"
-    body_wi = ""
-    body_de = ""
-    try:
-        print(f"开始获取 {beginTimehms} 到 {endTimehms} 的Withdraw数据")
-        ## withdraw history
+    
+        method = "GET"
+        body_wi = ""
+        body_de = ""
+        try:
+            print(f"开始获取 {beginTimehms} 到 {endTimehms} 的Withdraw数据")
+            ## withdraw history
 
-        # 计算时间戳，使用 UTC 时间并按照 ISO 格式
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-        # state=2表示操作成功
-        endpoint_withdraw = '/api/v5/asset/withdrawal-history?state=2&type=4&before=' + str(startTimestamp) + "&after=" + str(endTimestamp)
-        # 拼接需要签名的字符串
-        sign_str_wi = timestamp + method + endpoint_withdraw + body_wi
-        # 使用 HMAC SHA256 方法对字符串进行加密
-        signature_wi = hmac.new(SecretKey.encode('utf-8'), sign_str_wi.encode('utf-8'), hashlib.sha256)
-        # 对加密后的结果进行 Base64 编码
-        OK_ACCESS_SIGN_wi = base64.b64encode(signature_wi.digest()).decode('utf-8')
-        # 设置请求headers
-        headers_wi = {
-            "OK-ACCESS-KEY": apiKey,
-            "OK-ACCESS-SIGN": OK_ACCESS_SIGN_wi,
-            "OK-ACCESS-TIMESTAMP": timestamp,
-            "OK-ACCESS-PASSPHRASE": passphrase
-        }
+            # 计算时间戳，使用 UTC 时间并按照 ISO 格式
+            timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            # state=2表示操作成功
+            endpoint_withdraw = '/api/v5/asset/withdrawal-history?state=2&type=4&before=' + str(startTimestamp) + "&after=" + str(endTimestamp)
+            # 拼接需要签名的字符串
+            sign_str_wi = timestamp + method + endpoint_withdraw + body_wi
+            # 使用 HMAC SHA256 方法对字符串进行加密
+            signature_wi = hmac.new(SecretKey.encode('utf-8'), sign_str_wi.encode('utf-8'), hashlib.sha256)
+            # 对加密后的结果进行 Base64 编码
+            OK_ACCESS_SIGN_wi = base64.b64encode(signature_wi.digest()).decode('utf-8')
+            # 设置请求headers
+            headers_wi = {
+                "OK-ACCESS-KEY": apiKey,
+                "OK-ACCESS-SIGN": OK_ACCESS_SIGN_wi,
+                "OK-ACCESS-TIMESTAMP": timestamp,
+                "OK-ACCESS-PASSPHRASE": passphrase
+            }
             
-        response_wi = requests.get(base_url + endpoint_withdraw, headers=headers_wi)
-        response_wi.raise_for_status()
-        df_wi = pd.DataFrame(response_wi.json()['data'])
+            response_wi = requests.get(base_url + endpoint_withdraw, headers=headers_wi)
+            response_wi.raise_for_status()
+            df_wi = pd.DataFrame(response_wi.json()['data'])
 
-        if df_wi.empty:
-            print("没有Withdraw数据")
-        else: 
-            trade_num = len(df_wi)
-            df_new = df_wi
-            # 如果数据超过limit(100条)
-
-            while trade_num == 100: # 数据条数超出limit限制
-                time.sleep(2)
-                min_date = min(df_new['ts'].astype(int)) # 由于时间按倒序排列，所以这里需要获取最小（最旧）的时间
-                min_date_hms = datetime.utcfromtimestamp(min_date / 1000).strftime("%Y-%m-%dT%H:%M:%S")
-                print(f"开始获取{min_date_hms}之前的Withdraw数据")
-                # 计算时间戳，使用 UTC 时间并按照 ISO 格式
-                timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-                # state=2表示操作成功
-                endpoint_withdraw = '/api/v5/asset/withdrawal-history?state=2&type=4&before=' + str(startTimestamp) + "&after=" + str(min_date)
-                # 拼接需要签名的字符串
-                sign_str_wi = timestamp + method + endpoint_withdraw + body_wi
-                # 使用 HMAC SHA256 方法对字符串进行加密
-                signature_wi = hmac.new(SecretKey.encode('utf-8'), sign_str_wi.encode('utf-8'), hashlib.sha256)
-                # 对加密后的结果进行 Base64 编码
-                OK_ACCESS_SIGN_wi = base64.b64encode(signature_wi.digest()).decode('utf-8')
-                # 设置请求headers
-                headers_wi = {
+            if df_wi.empty:
+                print("没有Withdraw数据")
+            else: 
+                trade_num = len(df_wi)
+                df_new = df_wi
+                
+                # 如果数据超过limit(100条)
+                while trade_num == 100: # 数据条数超出limit限制
+                    time.sleep(2)
+                    min_date = min(df_new['ts'].astype(int)) # 由于时间按倒序排列，所以这里需要获取最小（最旧）的时间
+                    min_date_hms = datetime.utcfromtimestamp(min_date / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+                    print(f"开始获取{min_date_hms}之前的Withdraw数据")
+                    # 计算时间戳，使用 UTC 时间并按照 ISO 格式
+                    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+                    # state=2表示操作成功
+                    endpoint_withdraw = '/api/v5/asset/withdrawal-history?state=2&type=4&before=' + str(startTimestamp) + "&after=" + str(min_date)
+                    # 拼接需要签名的字符串
+                    sign_str_wi = timestamp + method + endpoint_withdraw + body_wi
+                    # 使用 HMAC SHA256 方法对字符串进行加密
+                    signature_wi = hmac.new(SecretKey.encode('utf-8'), sign_str_wi.encode('utf-8'), hashlib.sha256)
+                    # 对加密后的结果进行 Base64 编码
+                    OK_ACCESS_SIGN_wi = base64.b64encode(signature_wi.digest()).decode('utf-8')
+                    # 设置请求headers
+                    headers_wi = {
                     "OK-ACCESS-KEY": apiKey,
                     "OK-ACCESS-SIGN": OK_ACCESS_SIGN_wi,
                     "OK-ACCESS-TIMESTAMP": timestamp,
                     "OK-ACCESS-PASSPHRASE": passphrase
-                }
+                    }
 
-                try:
-                    response = requests.get(base_url + endpoint_withdraw, headers=headers_wi)
-                    response.raise_for_status()
-                    df_new = pd.DataFrame(response.json()['data'])
-                    trade_num = len(df_new)
-                    df_wi = pd.concat([df_wi, df_new], ignore_index=True)
+                    try:
+                        response = requests.get(base_url + endpoint_withdraw, headers=headers_wi)
+                        response.raise_for_status()
+                        df_new = pd.DataFrame(response.json()['data'])
+                        trade_num = len(df_new)
+                        df_wi = pd.concat([df_wi, df_new], ignore_index=True)
             
-                except requests.exceptions.RequestException as e:
-                    print("Error:", e)
-                    break
+                    except requests.exceptions.RequestException as e:
+                        print("Error:", e)
+                        break
                     
-            print(f'共获取该时间内{len(df_wi)}条Withdraw数据')
+                print(f'共获取该时间内{len(df_wi)}条Withdraw数据')
             
-            # 格式修改
-            df_wi.rename(columns={'ccy': 'currency', 'amt': 'amount', 'txId': 'txHash', 
-                               'to':'contactIdentity', 'ts':'datetime'}, inplace=True) # ts只是提币申请时间
-            df_wi['datetime'] = pd.to_datetime(df_wi['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-            df_wi['contactPlatformSlug'] = ''
-            df_wi['type'] = 'EXCHANGE_WITHDRAW'
-            df_wi['direction'] = 'OUT'
+                # 格式修改
+                df_wi.rename(columns={'ccy': 'currency', 'amt': 'amount', 'txId': 'txHash', 
+                                   'to':'contactIdentity', 'ts':'datetime'}, inplace=True) # ts只是提币申请时间
+                df_wi['datetime'] = pd.to_datetime(df_wi['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                df_wi['contactPlatformSlug'] = ''
+                df_wi['type'] = 'EXCHANGE_WITHDRAW'
+                df_wi['direction'] = 'OUT'
                 
-            ## EXCHANGE_FEE
-            new_rows = df_wi.copy()
-            new_rows['type'] = 'EXCHANGE_FEE'
-            new_rows['amount'] = new_rows['fee']
-            new_rows['currency'] = new_rows['feeCcy']
+                ## EXCHANGE_FEE
+                new_rows = df_wi.copy()
+                new_rows['type'] = 'EXCHANGE_FEE'
+                new_rows['amount'] = new_rows['fee']
+                new_rows['currency'] = new_rows['feeCcy']
             
-            df_wi = pd.concat([df_wi, new_rows], ignore_index=True)
+                df_wi = pd.concat([df_wi, new_rows], ignore_index=True)
             
-            df_wi = df_wi[['type', 'txHash', 'datetime', 'contactIdentity',
-                                'contactPlatformSlug', 'direction', 'currency', 'amount']]
+                df_wi = df_wi[['type', 'txHash', 'datetime', 'contactIdentity',
+                                    'contactPlatformSlug', 'direction', 'currency', 'amount']]
 
             
-        # deposit history
-        print(f"开始获取 {beginTimehms} 到 {endTimehms} 的Deposit数据")
+            # deposit history
+            print(f"开始获取 {beginTimehms} 到 {endTimehms} 的Deposit数据")
             
-        # 计算时间戳，使用 UTC 时间并按照 ISO 格式
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-        endpoint_deposit = '/api/v5/asset/deposit-history?state=2&before=' + str(startTimestamp) + "&after=" + str(endTimestamp)
-        sign_str_de = timestamp + method + endpoint_deposit + body_de
-        signature_de = hmac.new(SecretKey.encode('utf-8'), sign_str_de.encode('utf-8'), hashlib.sha256)
-        OK_ACCESS_SIGN_de = base64.b64encode(signature_de.digest()).decode('utf-8')
-        headers_de = {
-            "OK-ACCESS-KEY": apiKey,
-            "OK-ACCESS-SIGN": OK_ACCESS_SIGN_de,
-            "OK-ACCESS-TIMESTAMP": timestamp,
-            "OK-ACCESS-PASSPHRASE": passphrase
-        }
+            # 计算时间戳，使用 UTC 时间并按照 ISO 格式
+            timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            endpoint_deposit = '/api/v5/asset/deposit-history?state=2&before=' + str(startTimestamp) + "&after=" + str(endTimestamp)
+            sign_str_de = timestamp + method + endpoint_deposit + body_de
+            signature_de = hmac.new(SecretKey.encode('utf-8'), sign_str_de.encode('utf-8'), hashlib.sha256)
+            OK_ACCESS_SIGN_de = base64.b64encode(signature_de.digest()).decode('utf-8')
+            headers_de = {
+                "OK-ACCESS-KEY": apiKey,
+                "OK-ACCESS-SIGN": OK_ACCESS_SIGN_de,
+                "OK-ACCESS-TIMESTAMP": timestamp,
+                "OK-ACCESS-PASSPHRASE": passphrase
+            }
             
-        response_de = requests.get(base_url + endpoint_deposit, headers=headers_de)
-        response_de.raise_for_status()
-        df_de = pd.DataFrame(response_de.json()['data'])
+            response_de = requests.get(base_url + endpoint_deposit, headers=headers_de)
+            response_de.raise_for_status()
+            df_de = pd.DataFrame(response_de.json()['data'])
 
-        if df_de.empty:
-            print("没有Deposit数据")
-        else:
-            trade_num = len(df_de)
-            df_new = df_de
-            # 如果数据超过limit(100条)
+            if df_de.empty:
+                print("没有Deposit数据")
+            else:
+                trade_num = len(df_de)
+                df_new = df_de
+                # 如果数据超过limit(100条)
 
-            while trade_num == 100: # 数据条数超出limit限制
-                time.sleep(1)
-                min_date = min(df_new['ts'].astype(int)) # 由于时间按倒序排列，所以这里需要获取最小（最旧）的时间
-                min_date_hms = datetime.utcfromtimestamp(min_date / 1000).strftime("%Y-%m-%dT%H:%M:%S")
-                print(f"开始获取{min_date_hms}之前的Deposit数据")
-                # 计算时间戳，使用 UTC 时间并按照 ISO 格式
-                timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-                # state=2表示操作成功
-                endpoint_deposit = '/api/v5/asset/deposit-history?state=2&type=4&before=' + str(startTimestamp) + "&after=" + str(min_date)
-                # 拼接需要签名的字符串
-                sign_str_de = timestamp + method + endpoint_deposit + body_de
-                # 使用 HMAC SHA256 方法对字符串进行加密
-                signature_de = hmac.new(SecretKey.encode('utf-8'), sign_str_de.encode('utf-8'), hashlib.sha256)
-                # 对加密后的结果进行 Base64 编码
-                OK_ACCESS_SIGN_de = base64.b64encode(signature_de.digest()).decode('utf-8')
-                # 设置请求headers
-                headers_de = {
+                while trade_num == 100: # 数据条数超出limit限制
+                    time.sleep(1)
+                    min_date = min(df_new['ts'].astype(int)) # 由于时间按倒序排列，所以这里需要获取最小（最旧）的时间
+                    min_date_hms = datetime.utcfromtimestamp(min_date / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+                    print(f"开始获取{min_date_hms}之前的Deposit数据")
+                    # 计算时间戳，使用 UTC 时间并按照 ISO 格式
+                    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+                    # state=2表示操作成功
+                    endpoint_deposit = '/api/v5/asset/deposit-history?state=2&type=4&before=' + str(startTimestamp) + "&after=" + str(min_date)
+                    # 拼接需要签名的字符串
+                    sign_str_de = timestamp + method + endpoint_deposit + body_de
+                    # 使用 HMAC SHA256 方法对字符串进行加密
+                    signature_de = hmac.new(SecretKey.encode('utf-8'), sign_str_de.encode('utf-8'), hashlib.sha256)
+                    # 对加密后的结果进行 Base64 编码
+                    OK_ACCESS_SIGN_de = base64.b64encode(signature_de.digest()).decode('utf-8')
+                    # 设置请求headers
+                    headers_de = {
                     "OK-ACCESS-KEY": apiKey,
                     "OK-ACCESS-SIGN": OK_ACCESS_SIGN_de,
                     "OK-ACCESS-TIMESTAMP": timestamp,
                     "OK-ACCESS-PASSPHRASE": passphrase
                     }
 
-                try:
-                    response = requests.get(base_url + endpoint_deposit, headers=headers_de)
-                    response.raise_for_status()
-                    df_new = pd.DataFrame(response.json()['data'])
-                    trade_num = len(df_new)
-                    df_de = pd.concat([df_de, df_new], ignore_index=True)
+                    try:
+                        response = requests.get(base_url + endpoint_deposit, headers=headers_de)
+                        response.raise_for_status()
+                        df_new = pd.DataFrame(response.json()['data'])
+                        trade_num = len(df_new)
+                        df_de = pd.concat([df_de, df_new], ignore_index=True)
             
-                except requests.exceptions.RequestException as e:
-                    print("Error:", e)
-                    break
-            print(f'共获取该时间内{len(df_de)}条Deposit数据')
-            # 格式修改
-            df_de.rename(columns={'ccy': 'currency', 'amt': 'amount', 'txId': 'txHash', 
-                            'to':'contactIdentity', 'ts':'datetime'}, inplace=True) # ts只是提币申请时间
-            df_de['datetime'] = pd.to_datetime(df_de['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-            df_de['contactPlatformSlug'] = ''
-            df_de['type'] = 'EXCHANGE_DEPOSIT'
-            df_de['direction'] = 'IN'
+                    except requests.exceptions.RequestException as e:
+                        print("Error:", e)
+                        break
+                print(f'共获取该时间内{len(df_de)}条Deposit数据')
+                # 格式修改
+                df_de.rename(columns={'ccy': 'currency', 'amt': 'amount', 'txId': 'txHash', 
+                                'to':'contactIdentity', 'ts':'datetime'}, inplace=True) # ts只是提币申请时间
+                df_de['datetime'] = pd.to_datetime(df_de['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                df_de['contactPlatformSlug'] = ''
+                df_de['type'] = 'EXCHANGE_DEPOSIT'
+                df_de['direction'] = 'IN'
             
-            df_de = df_de[['type', 'txHash', 'datetime', 'contactIdentity',
-                            'contactPlatformSlug', 'direction', 'currency', 'amount']]
+                df_de = df_de[['type', 'txHash', 'datetime', 'contactIdentity',
+                                'contactPlatformSlug', 'direction', 'currency', 'amount']]
             
-        result = pd.concat([df_wi, df_de], ignore_index=True)
-            
+            result = pd.concat([df_wi, df_de], ignore_index=True)
+            current_transfers = result
         
-    except requests.exceptions.RequestException as e:
-        print("Error:", e)
+        except requests.exceptions.RequestException as e:
+            print("Error:", e)
+
+        if current_transfers is not None:
+            # 将当前时间段的结果添加到总结果中
+            result = pd.concat([result, current_transfers], ignore_index=True)
+        
+        # 更新下一次循环的开始时间为当前循环的结束时间的下一天
+        currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%d")
+        beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d")
 
     ##### trade
+    beginTime = beginTimetemp
+    endTime = endTimetemp
     while True:
         time.sleep(1)
         if beginTime > endTime:
