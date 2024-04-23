@@ -97,9 +97,10 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
             # 如果数据超过limit(100条)
 
             while trade_num == 100: # 数据条数超出limit限制
-                time.sleep(8)
+                time.sleep(2)
                 min_date = min(df_new['ts'].astype(int)) # 由于时间按倒序排列，所以这里需要获取最小（最旧）的时间
-
+                min_date_hms = datetime.utcfromtimestamp(min_date / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+                print(f"开始获取{min_date_hms}之前的Withdraw数据")
                 # 计算时间戳，使用 UTC 时间并按照 ISO 格式
                 timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
                 # state=2表示操作成功
@@ -112,10 +113,10 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
                 OK_ACCESS_SIGN_wi = base64.b64encode(signature_wi.digest()).decode('utf-8')
                 # 设置请求headers
                 headers_wi = {
-                "OK-ACCESS-KEY": apiKey,
-                "OK-ACCESS-SIGN": OK_ACCESS_SIGN_wi,
-                "OK-ACCESS-TIMESTAMP": timestamp,
-                "OK-ACCESS-PASSPHRASE": passphrase
+                    "OK-ACCESS-KEY": apiKey,
+                    "OK-ACCESS-SIGN": OK_ACCESS_SIGN_wi,
+                    "OK-ACCESS-TIMESTAMP": timestamp,
+                    "OK-ACCESS-PASSPHRASE": passphrase
                 }
 
                 try:
@@ -181,7 +182,8 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
             while trade_num == 100: # 数据条数超出limit限制
                 time.sleep(1)
                 min_date = min(df_new['ts'].astype(int)) # 由于时间按倒序排列，所以这里需要获取最小（最旧）的时间
-
+                min_date_hms = datetime.utcfromtimestamp(min_date / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+                print(f"开始获取{min_date_hms}之前的Deposit数据")
                 # 计算时间戳，使用 UTC 时间并按照 ISO 格式
                 timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
                 # state=2表示操作成功
@@ -194,11 +196,11 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
                 OK_ACCESS_SIGN_de = base64.b64encode(signature_de.digest()).decode('utf-8')
                 # 设置请求headers
                 headers_de = {
-                "OK-ACCESS-KEY": apiKey,
-                "OK-ACCESS-SIGN": OK_ACCESS_SIGN_de,
-                "OK-ACCESS-TIMESTAMP": timestamp,
-                "OK-ACCESS-PASSPHRASE": passphrase
-                }
+                    "OK-ACCESS-KEY": apiKey,
+                    "OK-ACCESS-SIGN": OK_ACCESS_SIGN_de,
+                    "OK-ACCESS-TIMESTAMP": timestamp,
+                    "OK-ACCESS-PASSPHRASE": passphrase
+                    }
 
                 try:
                     response = requests.get(base_url + endpoint_deposit, headers=headers_de)
@@ -391,5 +393,5 @@ apiKey = "c943b0c5-3337-451f-8df6-618231aa753a"
 SecretKey = "74FE2DCF0891C02BB0772718404FF748"
 passphrase = "20240220aA!"
 
-transfers = processData(apiKey, SecretKey, passphrase, beginTime = '2024-04-18', endTime = '2024-04-21', timezone = 'Asia/Shanghai')
+transfers = processData(apiKey, SecretKey, passphrase, beginTime = '2023-12-01', endTime = '2024-03-01', timezone = 'Asia/Shanghai')
 transfers
