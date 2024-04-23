@@ -1,3 +1,4 @@
+# 暂时两个循环
 # processData to get withdraw, deposit and trade history
 
 import requests
@@ -97,6 +98,7 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
 
             if df_wi.empty:
                 print("没有Withdraw数据")
+                
             else: 
                 trade_num = len(df_wi)
                 df_new = df_wi
@@ -180,6 +182,7 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
 
             if df_de.empty:
                 print("没有Deposit数据")
+                result = df_de
             else:
                 trade_num = len(df_de)
                 df_new = df_de
@@ -235,10 +238,11 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
         
         except requests.exceptions.RequestException as e:
             print("Error:", e)
+            continue
 
         if current_transfers is not None:
             # 将当前时间段的结果添加到总结果中
-            result = pd.concat([result, current_transfers], ignore_index=True)
+            all_transfers = pd.concat([all_transfers, current_transfers], ignore_index=True)
         
         # 更新下一次循环的开始时间为当前循环的结束时间的下一天
         currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%d")
@@ -396,9 +400,6 @@ def processData(apiKey, SecretKey, passphrase, beginTime=None, endTime=None, tim
         # 更新下一次循环的开始时间为当前循环的结束时间的下一天
         currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%d")
         beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d")
-        
-    # 拼接deposit，withdraw和trade的结果
-    all_transfers = pd.concat([all_transfers, result], ignore_index=True)
 
     function_endTime = time.time()
     duration = function_endTime - function_startTime
