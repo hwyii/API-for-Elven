@@ -1045,6 +1045,169 @@ def processData(pairs, apiKey, apiSecret, beginTime=None, endTime=None, timezone
 
     return result
 
+# processData to future
+import requests
+import hmac
+import hashlib
+import pandas as pd
+import pytz
+from datetime import datetime, timedelta
+import time
+
+def processDataFuture(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
+    function_startTime = time.time()
+    # endpoint
+    base_url = 'https://fapi.binance.com'
+    endpoint = '/fapi/v1/userTrades'
+
+    # 设置请求headers
+    headers = {
+        'X-MBX-APIKEY': apiKey,
+    } 
+    
+    print('开始获取Trade数据')
+    # 创建一个空的 DataFrame 用于存储所有数据
+    df_all_data = pd.DataFrame()
+
+    # 遍历每个 symbol
+    for symbol in ['BTC/USDT', 'XRP/USDT', 'ETH/USDT']:#pairs['binanceTest']:
+        if pd.isna(symbol):
+            print('已经获取所有数据！')
+            break
+        print(f'开始获取 {symbol} Trade数据')
+        temp = symbol # 存储带斜杠的交易对
+        # 去除 symbol 列中的斜杠
+        symbol = symbol.replace('/', '')
+        time.sleep(1)  #避免请求过于频繁
+    
+        # 构造请求参数
+        params = {
+            'symbol': symbol,
+            'fromId': 0,
+            'limit': 1000,
+            'recvWindow': 6000,
+            'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
+        }
+
+        # 计算签名
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        signature = hmac.new(apiSecret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        params['signature'] = signature
+
+        try:
+            response = requests.get(base_url + endpoint, headers=headers, params=params)
+            response.raise_for_status()  # 如果请求不成功，会抛出异常
+            df = pd.DataFrame(response.json())
+            trade_num = len(df)
+            df_new = df
+        except requests.exceptions.RequestException as e:
+            print("Error:", e)
+            df = pd.DataFrame()
+            
+        if df.empty: # 如果没有这个交易对
+            continue
+
+        trade_num = len(df)
+        df_new = df
+            
+        while trade_num == 1000: # 数据条数超出limit限制
+            time.sleep(1)
+            max_id = max(df_new['id'])
+        
+            params_in = {
+                'symbol': symbol,
+                'fromId': max_id,
+                'recvWindow': 60000,
+                'limit': 1000,
+                'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
+            }
+
+            query_string_in = '&'.join([f"{k}={v}" for k, v in params_in.items()])
+            signature_in = hmac.new(apiSecret.encode('utf-8'), query_string_in.encode('utf-8'), hashlib.sha256).hexdigest()
+            params_in['signature'] = signature_in
+
+            try:
+                response = requests.get(base_url + endpoint, headers=headers, params=params_in)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                print("Error:", e)
+                break
+                
+            df_new = pd.DataFrame(response.json())
+            trade_num = len(df_new)
+            df = pd.concat([df, df_new], ignore_index=True)
+            
+        print(f'共获取{len(df)}条数据')
+        
+        # 格式修改
+        df.rename(columns={'symbol': 'currency', 'id': 'txHash', 'time': 'datetime'}, inplace=True)
+        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        df['contactPlatformSlug'] = ''
+        df['contactIdentity'] = ''
+        df['currency'] = temp
+        df["type"] = ''
+        df["direction"] = ''
+        df['amount'] = ''
+        
+        # 复制原始数据，准备拆分后的两条数据
+        df_out = df.copy()
+        df_in = df.copy()
+
+        # 拆分后的第一条数据
+        df_in['currency'] = df_in['currency'].apply(lambda x: x.split('/')[0])  # 取斜杠前的币种
+        df_in['direction'] = df['buyer'].apply(lambda x: "IN" if x else "OUT")
+        df_in['type'] = df['buyer'].apply(lambda x: "EXCHANGE_TRADE_IN" if x else "EXCHANGE_TRADE_OUT")
+        df_in["amount"] = df_in['qty']
+
+        # 拆分后的第二条数据
+        df_out['currency'] = df_out['currency'].apply(lambda x: x.split('/')[1])  # 取斜杠后的币种
+        df_out['direction'] = df_out['buyer'].apply(lambda x: "OUT" if x else "IN")
+        df_out['type'] = df_out['buyer'].apply(lambda x: "EXCHANGE_TRADE_OUT" if x else "EXCHANGE_TRADE_IN")
+        df_out['amount'] = df_out['quoteQty']
+
+
+        # 合并两条拆分后的数据到原始数据框中
+        df = pd.concat([df_in, df_out], ignore_index=True)
+        
+        # EXCHANGE FEE
+        new_rows = df.copy()
+        new_rows['type'] = 'EXCHANGE_FEE'
+        new_rows['amount'] = new_rows['commission']
+        new_rows['currency'] = new_rows['commissionAsset']
+        new_rows['direction'] = 'OUT'
+
+        # 将新的DataFrame与原始的DataFrame合并，确保不会有重复的行出现
+        df = pd.concat([df, new_rows], ignore_index=True).drop_duplicates()
+  
+        #df = df[['type', 'txHash', 'datetime', 'contactIdentity',
+        #                'contactPlatformSlug', 'direction', 'currency', 'amount']]
+        
+        # 将该 symbol 的数据添加到总的数据框中
+        df_all_data = pd.concat([df_all_data, df], ignore_index=True)
+        
+        
+        # 选择时间
+        beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime('%Y-%m-%d %H:%M:%S')
+        endTime_tr = str(datetime.strptime(endTime + "T23:59:59", "%Y-%m-%dT%H:%M:%S"))
+        df_all_data = df_all_data[(df_all_data['datetime'] >= beginTime_tr) & (df_all_data['datetime'] <= endTime_tr)]
+    
+    function_endTime = time.time()
+    duration = function_endTime - function_startTime
+    print(f"函数运行时间：{duration} 秒")
+    
+    print(f'共获取{len(df)}条数据')
+    return df_all_data
+
+apiKey = 'aYpOASeZduitui55DVhLjTqYU0C77Lti5yqXaz7IhDBy2h9CDBaeF97h6Nm2kPGO'
+apiSecret = 'jhwd34nhxvTdt8Ut8lf61aaAjZIO5acN1MLakaua9fodpB5qphUXD0IxTJInfDTM'
+
+# 读入交易对名单
+pairs = pd.read_csv('pairs.csv')
+
+transfers = processDataFuture(apiKey, apiSecret, beginTime = '2024-04-01', endTime = '2024-04-30', timezone = 'Asia/Shanghai')
+transfers
+
+
 
 apiKey = 'cPRKGQV6QGTOwpQUTK6VhbungH5rTy6xKL4TZQgipr6oPqPAgtnE5gfGpI2BIu0K'
 apiSecret = 'LbYip4Polxsnv2pMGoRdt3QGLmvD43555XH2iuXdsDs9V5r0C7SL9CDhzWbk9d1l'
