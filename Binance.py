@@ -903,3 +903,22 @@ class BinanceProcessor:
     
         print(f'共获取{len(all_transfers)}条数据')
         return all_transfers
+
+
+# 调用
+from Binance import BinanceProcessor
+import pandas as pd
+# apiKey = 'aYpOASeZduitui55DVhLjTqYU0C77Lti5yqXaz7IhDBy2h9CDBaeF97h6Nm2kPGO'
+# apiSecret = 'jhwd34nhxvTdt8Ut8lf61aaAjZIO5acN1MLakaua9fodpB5qphUXD0IxTJInfDTM'
+apiKey = 'cPRKGQV6QGTOwpQUTK6VhbungH5rTy6xKL4TZQgipr6oPqPAgtnE5gfGpI2BIu0K'
+apiSecret = 'LbYip4Polxsnv2pMGoRdt3QGLmvD43555XH2iuXdsDs9V5r0C7SL9CDhzWbk9d1l'
+pairs = pd.read_csv('pairs.csv')
+binance = BinanceProcessor(pairs, apiKey, apiSecret, beginTime = '2023-12-01', endTime = '2023-12-31', timezone = 'UTC')
+# binance.processDataIncome()
+# binance.processDataFuture()
+# binance.processDataBNB()
+# binance.processDataEarn()
+# binance.processDatac2c()
+# binance.processDataWithdraw()
+# binance.processDataDeposit()
+# binance.processDataTrade()
