@@ -41,7 +41,7 @@ def processData(apiKey, account_id, beginTime=None, endTime=None, timezone=None)
                        'destinationAddress': 'contactIdentity', 'transaction.amount': 'amount',
                           'transaction.destination.destination_address': 'contactIdentity',
                           'transaction.network_name':'contactPlatformSlug'}, inplace=True)
-    
+        df['datetime'] = pd.to_datetime(df['datetime']).dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         
         df['direction'] = ''
         df['type'] = ''
