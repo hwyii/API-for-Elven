@@ -49,8 +49,8 @@ def processData(address, beginTime=None, endTime=None, timezone=None):
             df['direction'] = df['amount'].astype(float).apply(lambda x: "OUT" if x < 0 else "IN")
             df['amount'] = df['amount'].astype(float).abs() / 10**18 # 换算单位
             
-            df['type'] = df['type'].replace({'send': 'WITHDRAW', 'receive': 'DEPOSIT',
-                                             'burn-fee': 'FEE', 'miner-fee': 'FEE'})
+            df['type'] = df['type'].replace({'send': 'CHAIN_TRANSFER_OUT', 'receive': 'CHAIN_TRANSFER_IN',
+                                             'burn-fee': 'CHAIN_TRANSACTION_FEE', 'miner-fee': 'CHAIN_TRANSACTION_FEE'})
             
             df = df[['type', 'txHash', 'datetime', 'contactIdentity',
                       'contactPlatformSlug', 'direction', 'currency', 'amount']]
