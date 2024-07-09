@@ -1,5 +1,8 @@
-import pandas as pd
 import requests
+import pandas as pd
+from datetime import datetime
+import pytz
+import time
 
 def processData(address, beginTime=None, endTime=None, timezone=None):
     BASE_URL = 'https://filfox.info/api/v1'
@@ -18,8 +21,9 @@ def processData(address, beginTime=None, endTime=None, timezone=None):
     page = 0
     
     while True:
-        # 发送GET请求并获取数据
+        # 构造请求参数
         params = {'page': page, 'pageSize': page_size}
+        
         try:
             response = requests.get(url, headers=headers, params=params)
             response.raise_for_status() 
@@ -54,7 +58,19 @@ def processData(address, beginTime=None, endTime=None, timezone=None):
             
             df = df[['type', 'txHash', 'datetime', 'contactIdentity',
                       'contactPlatformSlug', 'direction', 'currency', 'amount']]
-                      
+        # 过滤时间
+        timezone = pytz.timezone(timezone)
+        # 转换为 UTC 时间
+        beginTime_tr = timezone.localize(datetime.strptime(beginTime, '%Y-%m-%d').replace(hour=0, minute=0, second=0)).astimezone(pytz.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        endTime_tr = timezone.localize(datetime.strptime(endTime, '%Y-%m-%d').replace(hour=23, minute=59, second=59)).astimezone(pytz.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        df = df[(df['datetime'] >= beginTime_tr) & (df['datetime'] <= endTime_tr)]
+
+        # 过滤重复行
+        df = df.drop_duplicates(subset=['txHash', 'contactIdentity', 'amount'])
+        df.reset_index(drop=True, inplace=True)
+        
         return df
+        
     else:
         return pd.DataFrame()
