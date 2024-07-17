@@ -672,106 +672,100 @@ class BinanceProcessor:
 
     # processData to future
 
-    def processDataFuture(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
-        function_startTime = time.time()
-        # endpoint
-        base_url = 'https://fapi.binance.com'
-        endpoint = '/fapi/v1/userTrades'
+    def processDataFuture(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):  
+        function_startTime = time.time()  
+        # endpoint  
+        base_url = 'https://fapi.binance.com'  
+        endpoint = '/fapi/v1/userTrades'  
 
-        # 设置请求headers
-        headers = {
-            'X-MBX-APIKEY': apiKey,
-        } 
+        # 设置请求headers  
+        headers = {  
+            'X-MBX-APIKEY': apiKey,  
+        }  
+
+        # 构造请求参数  
+        params = {  
+            'fromId': 0,  
+            'limit': 1000,  
+            'recvWindow': 60000,  
+            'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳  
+        }  
     
-        # 创建一个空的 DataFrame 用于存储所有数据
-        df_all_data = pd.DataFrame()
+        # 创建一个空的 DataFrame 用于存储所有数据  
+        df = pd.DataFrame()  
 
-        # 构造请求参数
-        params = {
-            'fromId': 0,
-            'limit': 1000,
-            'recvWindow': 6000,
-            'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
-        }
+        # 如果提供了beginTime和endTime，转换为datetime对象  
+        if beginTime:  
+            beginTime_dt = datetime.strptime(beginTime, '%Y-%m-%d')  
+            beginTime_ms = int(beginTime_dt.timestamp() * 1000)  
+        if endTime:  
+            endTime_dt = datetime.strptime(endTime + "T23:59:59", '%Y-%m-%dT%H:%M:%S')  
+            endTime_ms = int(endTime_dt.timestamp() * 1000)  
 
-        # 计算签名
-        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-        signature = hmac.new(apiSecret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
-        params['signature'] = signature
+        while True:  
+            # 计算签名  
+            query_string = '&'.join([f"{k}={v}" for k, v in params.items()])  
+            signature = hmac.new(apiSecret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()  
+            params['signature'] = signature  
 
-        try:
-            response = requests.get(base_url + endpoint, headers=headers, params=params)
-            response.raise_for_status()  # 如果请求不成功，会抛出异常
-            df = pd.DataFrame(response.json())
-            trade_num = len(df)
-            df_new = df
-        except requests.exceptions.RequestException as e:
-            print("Error:", e)
-            df = pd.DataFrame()
+            try:  
+                response = requests.get(base_url + endpoint, headers=headers, params=params)  
+                response.raise_for_status()  # 如果请求不成功，会抛出异常  
+            except requests.exceptions.RequestException as e:  
+                print("Error:", e)  
+                break  
 
-        trade_num = len(df)
-        df_new = df
+            df_new = pd.DataFrame(response.json())  
+            trade_num = len(df_new)  
         
-        while trade_num == 1000: # 数据条数超出limit限制
-            time.sleep(1)
-            max_id = max(df_new['id'])
-        
-            params_in = {
-                'fromId': max_id,
-                'recvWindow': 60000,
-                'limit': 1000,
-                'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
-            }
+            if trade_num == 0:  
+                break  
 
-            query_string_in = '&'.join([f"{k}={v}" for k, v in params_in.items()])
-            signature_in = hmac.new(apiSecret.encode('utf-8'), query_string_in.encode('utf-8'), hashlib.sha256).hexdigest()
-            params_in['signature'] = signature_in
+            # 更新请求参数  
+            params['fromId'] = max(df_new['id'])  
 
-            try:
-                response = requests.get(base_url + endpoint, headers=headers, params=params_in)
-                response.raise_for_status()
-            except requests.exceptions.RequestException as e:
-                print("Error:", e)
-                break
-                
-            df_new = pd.DataFrame(response.json())
-            trade_num = len(df_new)
-            df = pd.concat([df, df_new], ignore_index=True)
-            
-        
-        # 更新格式修改
-        df.rename(columns={'orderId': 'tradeHash', 'time': 'datetime', 'quoteQty': 'counterAmount',
-                           'commissionAsset': 'feeCurrency', 'commission': 'feeAmount',
-                          'qty': 'baseAmount', 'symbol': 'baseAsset'}, inplace=True)
-        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-        # 设置type
+            if beginTime and endTime:  
+                df_new = df_new[(df_new['time'] >= beginTime_ms) & (df_new['time'] <= endTime_ms)]  
+
+            df = pd.concat([df, df_new], ignore_index=True)  
+
+            if len(df_new) < 1000 or (min(df_new['time']) <= beginTime_ms if beginTime else False):  
+                break  
+
+            time.sleep(1)  
+
+        if df.empty:  
+            print('没有数据')  
+            return df  
+
+        # 数据清理和转换  
+        df.rename(columns={'orderId': 'tradeHash', 'time': 'datetime', 'quoteQty': 'counterAmount',  
+                       'commissionAsset': 'feeCurrency', 'commission': 'feeAmount',  
+                       'qty': 'baseAmount', 'symbol': 'baseAsset'}, inplace=True)  
+        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')  
+
+        # 设置type  
         df.loc[(df['positionSide'] == 'LONG') & (df['side'] == 'BUY'), 'type'] = 'FUTURE_OPEN'  
         df.loc[(df['positionSide'] == 'LONG') & (df['side'] == 'SELL'), 'type'] = 'FUTURE_CLOSE'  
         df.loc[(df['positionSide'] == 'SHORT') & (df['side'] == 'BUY'), 'type'] = 'FUTURE_CLOSE'  
         df.loc[(df['positionSide'] == 'SHORT') & (df['side'] == 'SELL'), 'type'] = 'FUTURE_OPEN'  
         df['type'] = df['type'].fillna('')  
-        
-        df['memo'] = ''
-        df['counterCurrency'] = 'USDT'
-        
-        df = df[['tradeHash', 'datetime', 'type', 'baseAsset', 'positionSide', 
-                'baseAmount', 'counterCurrency', 'counterAmount', 
-            'feeCurrency', 'feeAmount', 'memo']]
-      
-        # 选择时间
-        beginTime_tr = datetime.strptime(beginTime, '%Y-%m-%d').strftime("%Y-%m-%dT%H:%M:%SZ")
-        endTime += "T23:59:59"  
-        endTime_tr = datetime.strptime(endTime, '%Y-%m-%dT%H:%M:%S').strftime('%Y-%m-%dT%H:%M:%SZ')  
-        df = df[(df['datetime'] >= beginTime_tr) & (df['datetime'] <= endTime_tr)]
-        df.reset_index(drop=True, inplace=True)
-    
-        print(f'共获取{len(df)}条数据')
-        function_endTime = time.time()
-        duration = function_endTime - function_startTime
-        print(f"函数运行时间：{duration} 秒")
- 
-        return df
+
+        df['memo'] = ''  
+        df['counterCurrency'] = 'USDT'  
+
+        df = df[['tradeHash', 'datetime', 'type', 'baseAsset', 'positionSide',  
+             'baseAmount', 'counterCurrency', 'counterAmount',  
+             'feeCurrency', 'feeAmount', 'memo']]  
+
+        df.reset_index(drop=True, inplace=True)  
+
+        print(f'共获取{len(df)}条数据')  
+        function_endTime = time.time()  
+        duration = function_endTime - function_startTime  
+        print(f"函数运行时间：{duration} 秒")  
+
+        return df  
 
     def processDataIncome(self):
         '''
