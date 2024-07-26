@@ -896,6 +896,348 @@ class BinanceProcessor:
         print(f'共获取{len(all_transfers)}条数据')
         return all_transfers
 
+# 补充一些函数
+# 查询子母账户万能划转历史 GET /sapi/v1/sub-account/universalTransfer
+def processDataUniversal(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
+    function_startTime = time.time()
+    # endpoint
+    base_url = 'https://api.binance.com'
+    endpoint = '/sapi/v1/sub-account/universalTransfer'
+
+    # 设置请求headers
+    headers = {
+        'X-MBX-APIKEY': apiKey,
+    } 
+    # 创建一个空的 DataFrame，用于存放结果
+    all_transfers = pd.DataFrame()
+    while (1):
+        time.sleep(1)
+        if beginTime > endTime:
+            break
+        # 获得当前循环的结束时间
+        currentEndTime = datetime.strptime(beginTime, "%Y-%m-%d") + timedelta(days=28)
+        # 如果当前结束时间超过了指定的结束时间，则将其设置为指定的结束时间
+        if currentEndTime > datetime.strptime(endTime, "%Y-%m-%d"):
+            currentEndTime = datetime.strptime(endTime, "%Y-%m-%d")
+        
+        # 处理当前时间段的数据
+        currentEndTime = currentEndTime.strftime("%Y-%m-%d") # 为了下一步传入processTime，将currentEndTime转成字符串年月日格式
+        startTimestamp, endTimestamp = processTime(beginTime, currentEndTime, timezone)
+        beginTimehms = datetime.utcfromtimestamp(startTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+        endTimehms = datetime.utcfromtimestamp(endTimestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S") # 为了便于按时间print，这两步是年月日时分秒的字符串格式
+
+        # 设置请求参数：
+        params = {
+            'timestamp': int(time.time() * 1000),
+            'startTime': startTimestamp,
+            'endTime': endTimestamp
+        }
+
+        # 计算签名
+        query_string = '&'.join([f'{key}={value}' for key, value in sorted(params.items())])
+        signature = hmac.new(apiSecret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+
+        try:
+            # fromEmail是母账户
+            print(f"开始获取 {beginTimehms} 到 {endTimehms} 的数据")
+            url = f'{base_url}{endpoint}?{query_string}&signature={signature}'
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            df = pd.DataFrame(response.json()['result'])
+            if df.empty:
+                account = ''
+            else:
+                account = df['fromEmail'][0] # 取出母账户
+        except requests.exceptions.RequestException as e:
+            print("Error:", e)
+            break
+
+        # 设置请求参数：
+        params1 = {
+            'timestamp': int(time.time() * 1000),
+            'startTime': startTimestamp,
+            'endTime': endTimestamp,
+            'toEmail': account
+        }
+
+        # 计算签名
+        query_string1 = '&'.join([f'{key}={value}' for key, value in sorted(params1.items())])
+        signature1 = hmac.new(apiSecret.encode(), query_string1.encode(), hashlib.sha256).hexdigest()
+        try:
+            # toEamil是母账户
+            url1 = f'{base_url}{endpoint}?{query_string1}&signature={signature1}'
+            response1 = requests.get(url1, headers=headers)
+            response1.raise_for_status()
+            df1 = pd.DataFrame(response1.json()['result'])
+            df = pd.concat([df, df1], ignore_index=True)
+        except requests.exceptions.RequestException as e:
+            print("Error:", e)
+            break
+        
+            
+        if df.empty:
+            print("没有数据")
+        else:
+                
+            df['createTimeStamp'] = pd.to_datetime(df['createTimeStamp'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            df.rename(columns={'createTimeStamp': 'datetime', 'asset': 'currency', 'toEmail': 'contactIdentity', 
+                                       'tranId': 'txHash'}, inplace=True)
+            df['contactPlatformSlug'] = ''
+            df['amount'] = df['amount'].astype(float)
+      
+            df['type'] = df['fromEmail'].apply(lambda x: 'EXCHANGE_TRANSFER_OUT' if x == account else 'EXCHANGE_TRANSFER_IN')
+            df["direction"] = df['fromEmail'].apply(lambda x: 'OUT' if x == account else 'IN')
+
+            df = df[['type', 'txHash', 'datetime', 'contactIdentity',
+                    'contactPlatformSlug', 'direction', 'currency', 'amount']]
+                
+        current_transfers = df
+        
+        if current_transfers is not None:
+            # 将当前时间段的结果添加到总结果中
+            all_transfers = pd.concat([all_transfers, current_transfers], ignore_index=True)
+        
+        # 更新下一次循环的开始时间为当前循环的结束时间的下一天
+        currentEndTime = datetime.strptime(currentEndTime, "%Y-%m-%d")
+        beginTime = (currentEndTime + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    all_transfers.reset_index(drop=True, inplace=True)
+
+    print(f'共获取{len(all_transfers)}条数据')
+    function_endTime = time.time()
+    duration = function_endTime - function_startTime
+    print(f"函数运行时间：{duration} 秒")
+    return all_transfers
+
+# 获取资产划转记录（稳定币自动兑换划转查询）
+def processDataCovert(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
+    function_startTime = time.time()
+    # endpoint
+    base_url = 'https://api.binance.com'
+    endpoint = '/sapi/v1/asset/convert-transfer/queryByPage'
+
+    # 设置请求headers
+    headers = {
+        'X-MBX-APIKEY': apiKey,
+    } 
+
+
+    start_time, end_time = processTime(beginTime, endTime, timezone)
+    print('开始获取数据')
+    # 构造请求参数
+    params = {
+        'startTime': start_time,
+        'endTime': end_time,
+        'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳
+    }
+
+    # 计算签名
+    query_string = '&'.join([f'{key}={value}' for key, value in sorted(params.items())])
+    signature = hmac.new(apiSecret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+
+    try:
+        url = f'{base_url}{endpoint}?{query_string}&signature={signature}'
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        if response.json()['total'] == 0:
+            df = pd.DataFrame()
+        else:
+            df = pd.DataFrame(response.json()['rows'])
+        
+    except requests.exceptions.RequestException as e:
+        print("Error:", e)
+        df = pd.DataFrame()
+            
+    if df.empty:
+        print("没有数据")
+    
+    function_endTime = time.time()
+    duration = function_endTime - function_startTime
+    print(f"函数运行时间：{duration} 秒")
+    
+    print(f'共获取{len(df)}条数据')
+    return df
+
+def processDataUsdmTrade(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):  
+    function_startTime = time.time()  
+    # endpoint  
+    base_url = 'https://fapi.binance.com'  
+    endpoint = '/fapi/v1/userTrades'  
+
+    # 设置请求headers  
+    headers = {  
+        'X-MBX-APIKEY': apiKey,  
+    }  
+
+    # 构造请求参数  
+    params = {  
+        'fromId': 0,  
+        'limit': 1000,  
+        'recvWindow': 60000,  
+        'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳  
+    }  
+    
+    # 创建一个空的 DataFrame 用于存储所有数据  
+    df = pd.DataFrame()  
+
+    # 如果提供了beginTime和endTime，转换为datetime对象  
+    if beginTime:  
+        beginTime_dt = datetime.strptime(beginTime, '%Y-%m-%d')  
+        beginTime_ms = int(beginTime_dt.timestamp() * 1000)  
+    if endTime:  
+        endTime_dt = datetime.strptime(endTime + "T23:59:59", '%Y-%m-%dT%H:%M:%S')  
+        endTime_ms = int(endTime_dt.timestamp() * 1000)  
+
+    while True:  
+        # 计算签名  
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])  
+        signature = hmac.new(apiSecret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()  
+        params['signature'] = signature  
+
+        try:  
+            response = requests.get(base_url + endpoint, headers=headers, params=params)  
+            response.raise_for_status()  # 如果请求不成功，会抛出异常  
+        except requests.exceptions.RequestException as e:  
+            print("Error:", e)  
+            break  
+
+        df_new = pd.DataFrame(response.json())  
+        trade_num = len(df_new)  
+        
+        if trade_num == 0:  
+            break  
+
+        # 更新请求参数  
+        params['fromId'] = max(df_new['id'])  
+
+        if beginTime and endTime:  
+            df_new = df_new[(df_new['time'] >= beginTime_ms) & (df_new['time'] <= endTime_ms)]  
+
+        df = pd.concat([df, df_new], ignore_index=True)  
+
+        if len(df_new) < 1000 or (min(df_new['time']) <= beginTime_ms if beginTime else False):  
+            break  
+
+        time.sleep(1)  
+
+    if df.empty:  
+        print('没有数据')  
+        return df  
+
+    # 数据清理和转换  
+    df.rename(columns={'orderId': 'tradeHash', 'time': 'datetime', 'quoteQty': 'counterAmount',  
+                       'commissionAsset': 'feeCurrency', 'commission': 'feeAmount',  
+                       'qty': 'baseAmount', 'symbol': 'baseAsset'}, inplace=True)  
+    df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')  
+
+    # 设置type  
+    df.loc[(df['positionSide'] == 'LONG') & (df['side'] == 'BUY'), 'type'] = 'FUTURE_OPEN'  
+    df.loc[(df['positionSide'] == 'LONG') & (df['side'] == 'SELL'), 'type'] = 'FUTURE_CLOSE'  
+    df.loc[(df['positionSide'] == 'SHORT') & (df['side'] == 'BUY'), 'type'] = 'FUTURE_CLOSE'  
+    df.loc[(df['positionSide'] == 'SHORT') & (df['side'] == 'SELL'), 'type'] = 'FUTURE_OPEN'  
+    df['type'] = df['type'].fillna('')  
+
+    df['memo'] = ''  
+    df['counterCurrency'] = 'USDT'  
+
+    df = df[['tradeHash', 'datetime', 'type', 'baseAsset', 'positionSide',  
+             'baseAmount', 'counterCurrency', 'counterAmount',  
+             'feeCurrency', 'feeAmount', 'memo']]  
+
+    df.reset_index(drop=True, inplace=True)  
+
+    print(f'共获取{len(df)}条数据')  
+    function_endTime = time.time()  
+    duration = function_endTime - function_startTime  
+    print(f"函数运行时间：{duration} 秒")  
+
+    return df 
+
+def processDataUsdmGainLoss(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):  
+    function_startTime = time.time()  
+    # endpoint  
+    base_url = 'https://fapi.binance.com'  
+    endpoint = '/fapi/v1/userTrades'  
+
+    # 设置请求headers  
+    headers = {  
+        'X-MBX-APIKEY': apiKey,  
+    }  
+
+    # 构造请求参数  
+    params = {  
+        'fromId': 0,  
+        'limit': 1000,  
+        'recvWindow': 60000,  
+        'timestamp': int(time.time() * 1000)  # 以毫秒为单位的当前时间戳  
+    }  
+    
+    # 创建一个空的 DataFrame 用于存储所有数据  
+    df = pd.DataFrame()  
+
+    # 如果提供了beginTime和endTime，转换为datetime对象  
+    if beginTime:  
+        beginTime_dt = datetime.strptime(beginTime, '%Y-%m-%d')  
+        beginTime_ms = int(beginTime_dt.timestamp() * 1000)  
+    if endTime:  
+        endTime_dt = datetime.strptime(endTime + "T23:59:59", '%Y-%m-%dT%H:%M:%S')  
+        endTime_ms = int(endTime_dt.timestamp() * 1000)  
+
+    while True:  
+        # 计算签名  
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])  
+        signature = hmac.new(apiSecret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()  
+        params['signature'] = signature  
+
+        try:  
+            response = requests.get(base_url + endpoint, headers=headers, params=params)  
+            response.raise_for_status()  # 如果请求不成功，会抛出异常  
+        except requests.exceptions.RequestException as e:  
+            print("Error:", e)  
+            break  
+
+        df_new = pd.DataFrame(response.json())  
+        trade_num = len(df_new)  
+        
+        if trade_num == 0:  
+            break  
+
+        # 更新请求参数  
+        params['fromId'] = max(df_new['id'])  
+
+        if beginTime and endTime:  
+            df_new = df_new[(df_new['time'] >= beginTime_ms) & (df_new['time'] <= endTime_ms)]  
+
+        df = pd.concat([df, df_new], ignore_index=True)  
+
+        if len(df_new) < 1000 or (min(df_new['time']) <= beginTime_ms if beginTime else False):  
+            break  
+
+        time.sleep(1)  
+
+    if df.empty:  
+        print('没有数据')  
+        return df  
+
+    # 数据清理和转换  
+    df.rename(columns={'orderId': 'gainLossHash', 'time': 'datetime', 'symbol': 'baseAsset', 'realizedPnl': 'amount'}, inplace=True)  
+    df['datetime'] = pd.to_datetime(df['datetime'], unit='ms').dt.strftime('%Y-%m-%dT%H:%M:%SZ')  
+    df['type'] = 'FUTURE_REALZIED'
+    df['memo'] = ''  
+    df['currency'] = 'USDT' 
+    df['amount'] = df['amount'].astype(float)
+
+    df = df[['gainLossHash', 'datetime', 'type', 'baseAsset', 'positionSide',  
+             'currency', 'amount', 'memo']]  
+
+    df.reset_index(drop=True, inplace=True)  
+
+    print(f'共获取{len(df)}条数据')  
+    function_endTime = time.time()  
+    duration = function_endTime - function_startTime  
+    print(f"函数运行时间：{duration} 秒")  
+
+    return df  
 
 # 调用
 from Binance import BinanceProcessor
