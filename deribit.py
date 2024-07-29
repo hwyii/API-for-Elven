@@ -10,8 +10,8 @@ pd.set_option('display.max_colwidth', None)
 TOKEN_URL = "https://www.deribit.com/api/v2/public/auth"
 
 # Replace these with your actual CLIENT_ID and CLIENT_SECRET
-CLIENT_ID = 'qyQjesnc'
-CLIENT_SECRET = 'SWsoxjrAL3m8-_G559_Qys6BTnBQsU52KNY_EPVK0U4'
+CLIENT_ID = 'your ID here'
+CLIENT_SECRET = 'your SECRET here'
 
 def get_access_token(client_id, client_secret):
     data = {
