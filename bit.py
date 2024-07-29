@@ -170,8 +170,8 @@ def processData(key, secret, beginTime=None, endTime=None, timezone=None):
         print("Error:", e)
         return None   
 
-key = 'ak-ca2cf8ee-0403-46e7-be56-a5828bfdd70e'
-secret = 'pfU8F38cgjsYRtz5UvNAL1e9Xymd9oew1zhlOG7Y8KjTiGlHUCnJQ3M3Dqz35h4e'
+key = 'your key here'
+secret = 'your secret here'
 
 transfers = processData(key, secret, beginTime = '2024-01-25', endTime = '2024-04-05', timezone = 'Asia/Shanghai')
 transfers
