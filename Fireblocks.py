@@ -92,7 +92,7 @@ def processData(apiKey, apiSecret, beginTime=None, endTime=None, timezone=None):
     return df
 
 # 加载 API 密钥
-api_key = 'f16cd7d7-54a9-4ea5-999d-6954dc4b8820'
+api_key = 'your apiKey here'
 api_secret = open('fireblocks_secret.key', 'r').read()
 
 transfers = processData(api_key, api_secret, beginTime = '2024-02-01', endTime = '2024-05-25', timezone = 'Asia/Shanghai')
