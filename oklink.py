@@ -256,7 +256,7 @@ def processData(apiKey, chainShortName, address, protocolType, beginTime=None, e
 
     return result
 
-apiKey = "d4a4be25-10a1-486a-ac67-7dcd9fa1d7db"
+apiKey = "your apiKey here"
 chainShortName = "base"
 address = "0x9b6899D37D3200a9EAe9F0E24765E8cC2057856D"
 protocolType = "token_20"
